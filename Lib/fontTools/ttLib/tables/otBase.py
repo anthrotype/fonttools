@@ -670,17 +670,42 @@ class BaseTable(object):
 				conv.xmlWrite(xmlWriter, font, value, conv.name, [])
 	
 	def fromXML(self, name, attrs, content, font):
+		from .otTables import lookupTypeNames
 		try:
 			conv = self.getConverterByName(name)
 		except KeyError:
 			raise    # XXX on KeyError, raise nice error
 		value = conv.xmlRead(attrs, content, font)
+		if conv.name == 'Lookup':
+			for element in content:
+				if not isinstance(element, tuple):
+					continue
+				name, attrs, content = element
+				if name in lookupTypeNames:
+					lookupType = lookupTypeNames[name]
+					break
+			setattr(value, 'LookupType', lookupType)
+		elif conv.name == 'PairValueRecord':
+			setattr(value, 'Value1', None)
+			setattr(value, 'Value2', None)
+		elif conv.name == 'Script':
+			setattr(value, 'LangSysCount', 0)
+			setattr(value, 'LangSysRecord', [])
+		elif conv.name == 'DefaultLangSys':
+			setattr(value, 'LookupOrder', None)
+		elif conv.name == 'Feature':
+			setattr(value, 'FeatureParams', None)
 		if conv.repeat:
 			seq = getattr(self, conv.name, None)
 			if seq is None:
 				seq = []
 				setattr(self, conv.name, seq)
 			seq.append(value)
+			if hasattr(self, conv.repeat):
+				count = getattr(self, conv.repeat)
+			else:
+				count = 0
+			setattr(self, conv.repeat, count+1)
 		else:
 			setattr(self, conv.name, value)
 	
