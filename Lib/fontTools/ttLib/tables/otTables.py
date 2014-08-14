@@ -746,6 +746,10 @@ def _buildClasses():
 		for enum, cls in lookupEnum.items():
 			cls.LookupType = enum
 
+	global lookupTypeNames
+	lookupTypeNames = {v.__name__: k for k, v in lookupTypes['GPOS'].items()}
+	lookupTypeNames.update({v.__name__: k for k, v in lookupTypes['GSUB'].items()})
+
 	global featureParamTypes
 	featureParamTypes = {
 		'size': FeatureParamsSize,
