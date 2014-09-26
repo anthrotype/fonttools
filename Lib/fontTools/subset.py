@@ -2595,7 +2595,7 @@ def main(args):
 
   fontfile = args[0]
   if options.flavor:
-    ext = "."+options.flavor.lower()
+    ext = "."+options.flavor
   else:
     i = fontfile.rfind('.')
     if i != -1:
