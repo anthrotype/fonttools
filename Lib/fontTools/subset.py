@@ -10,6 +10,7 @@ from fontTools.misc import psCharStrings
 from fontTools.misc.textTools import binary2num
 from fontTools.ttx import makeOutputFileName
 from fontTools.pens import basePen
+import os
 import sys
 import struct
 import time
@@ -2610,10 +2611,8 @@ def main(args):
   if options.flavor:
     ext = "."+options.flavor
   else:
-    i = fontfile.rfind('.')
-    if i != -1:
-      ext = fontfile[i:]
-    else:
+    ext = os.path.splitext(fontfile)[1]
+    if not ext:
       ext = '.subset'
   args = args[1:]
 
@@ -2694,7 +2693,6 @@ def main(args):
   log.lapse("make one with everything(TOTAL TIME)")
 
   if log.verbose:
-    import os
     log("Input  font:% 7d bytes: %s" % (os.path.getsize(fontfile), fontfile))
     log("Subset font:% 7d bytes: %s" % (os.path.getsize(outfile), outfile))
 
