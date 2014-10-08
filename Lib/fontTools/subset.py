@@ -2075,6 +2075,8 @@ def prune_pre_subset(self, options):
         n.string = "\x7f".encode('utf-16be') if n.isUnicode() else "\x7f"
       elif n.nameID == 3:
         n.string = ""
+      elif n.nameID in [16, 17, 18]:
+        continue
       namerecs.append(n)
     self.names = namerecs
   return True  # Required table
