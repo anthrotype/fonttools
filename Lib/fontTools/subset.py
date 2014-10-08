@@ -2139,7 +2139,7 @@ class Options(object):
   symbol_cmap = False
   name_IDs = [1, 2]  # Family and Style
   name_legacy = False
-  name_languages = [0x0409]  # English
+  name_languages = [0, 0x0409]  # English
   obfuscate_names = False  # to make webfont unusable as a system font
   notdef_glyph = True # gid0 for TrueType / .notdef for CFF
   notdef_outline = False # No need for notdef to have an outline really
