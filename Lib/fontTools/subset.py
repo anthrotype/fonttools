@@ -229,11 +229,12 @@ Font naming options:
         --name-IDs='*'
             * keep all 'name' table entries
   --name-legacy
-      Keep legacy (non-Unicode) 'name' table entries (0.x, 1.x etc.).
+      Keep legacy (non-Uncode) 'name' table entries (0.x, 1.x etc.).
       XXX Note: This might be needed for some fonts that have no Unicode name
       entires for English. See: https://github.com/behdad/fonttools/issues/146
   --no-name-legacy
-      Drop legacy (non-Unicode) 'name' table entries [default]
+      Drop legacy (non-Unicode) 'name' table entries, if Unicode entries are
+      available for those nameIDs. [default]
   --name-languages[+|-]=<langID>[,<langID>]
       Specify (=), add to (+=) or exclude from (-=) the set of 'name' table
       langIDs that will be preserved. By default only records with langID
@@ -2061,7 +2062,13 @@ def prune_pre_subset(self, options):
   if '*' not in options.name_IDs:
     self.names = [n for n in self.names if n.nameID in options.name_IDs]
   if not options.name_legacy:
-    self.names = [n for n in self.names if n.isUnicode()]
+    mac_english = {n.nameID: n for n in self.names if (n.platformID == 1
+                   and n.platEncID == 0 and n.langID == 0)}
+    uni_english = [n.nameID for n in self.names if (n.platformID == 3
+                   and n.platEncID in [0, 1, 10] and n.langID == 0x0409)]
+    mac_only_english = [n for nameID, n in sorted(mac_english.items())
+                        if nameID in (set(mac_english) - set(uni_english))]
+    self.names = mac_only_english + [n for n in self.names if n.isUnicode()]
   # TODO(behdad) Option to keep only one platform's
   if '*' not in options.name_languages:
     # TODO(behdad) This is Windows-platform specific!
