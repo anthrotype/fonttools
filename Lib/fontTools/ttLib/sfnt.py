@@ -45,6 +45,20 @@ class SFNTReader(object):
 			self.flavor = "woff"
 			self.DirectoryEntry = WOFFDirectoryEntry
 			sstruct.unpack(woffDirectoryFormat, self.file.read(woffDirectorySize), self)
+		elif self.sfntVersion == b"wOF2":
+			import tempfile
+			self.flavor = "woff2"
+			woff2 = WOFF2Buffer()
+			sstruct.unpack(woff2DirectoryFormat, self.file.read(woff2DirectorySize), woff2)
+			self.flavorData = WOFF2FlavorData(woff2)
+			self.file.seek(0)
+			tmp = tempfile.TemporaryFile(prefix="woff2-fonttools")
+			convertWOFF2ToTTF(self.file, tmp)
+			self.file.close()
+			self.file = tmp
+			self.file.seek(0)
+			self.DirectoryEntry = SFNTDirectoryEntry
+			sstruct.unpack(sfntDirectoryFormat, self.file.read(sfntDirectorySize), self)
 		else:
 			sstruct.unpack(sfntDirectoryFormat, self.file.read(sfntDirectorySize), self)
 		self.sfntVersion = Tag(self.sfntVersion)
@@ -111,6 +125,12 @@ class SFNTWriter(object):
 			self.DirectoryEntry = WOFFDirectoryEntry
 
 			self.signature = "wOFF"
+		elif self.flavor == "woff2":
+			self.directoryFormat = woff2DirectoryFormat
+			self.directorySize = woff2DirectorySize
+			self.DirectoryEntry = WOFF2DirectoryEntry
+
+			self.signature = "wOF2"
 		else:
 			assert not self.flavor,  "Unknown flavor '%s'" % self.flavor
 			self.directoryFormat = sfntDirectoryFormat
@@ -334,6 +354,25 @@ woffDirectoryEntryFormat = """
 
 woffDirectoryEntrySize = sstruct.calcsize(woffDirectoryEntryFormat)
 
+woff2DirectoryFormat = """
+		> # big endian
+		signature:           4s   # "wOF2"
+		sfntVersion:         4s
+		length:              L    # total woff file size
+		numTables:           H    # number of tables
+		reserved:            H    # set to 0
+		totalSfntSize:       L    # uncompressed size
+		totalCompressedSize: L    # compressed size
+		majorVersion:        H    # major version of WOFF file
+		minorVersion:        H    # minor version of WOFF file
+		metaOffset:          L    # offset to metadata block
+		metaLength:          L    # length of compressed metadata
+		metaOrigLength:      L    # length of uncompressed metadata
+		privOffset:          L    # offset to private data block
+		privLength:          L    # length of private data block
+"""
+
+woff2DirectorySize = sstruct.calcsize(woff2DirectoryFormat)
 
 class DirectoryEntry(object):
 	
@@ -437,6 +476,197 @@ class WOFFFlavorData():
 				assert len(data) == reader.privLength
 				self.privData = data
 
+class WOFF2CompressionError(Exception): pass
+
+def woff2Uncompress(compressed_data, expected_size=None):
+	import brotli
+	try:
+		uncompressed_data = brotli.decompress(compressed_data)
+	except brotli.error as e:
+		raise WOFF2CompressionError(e)
+	if expected_size and len(uncompressed_data) != expected_size:
+		raise WOFF2CompressionError("uncompressed buffer doesn't match expected size")
+	return uncompressed_data
+
+def round4(value):
+	return (value + 3) & ~3
+
+def base128Size(n):
+	size = 1
+	while n >= 128:
+		size += 1
+		n >>= 7
+	return size
+
+def readBase128(file):
+	result = 0
+	for i in range(5):
+		data = file.read(1)
+		if len(data) == 0:
+			raise WOFF2CompressionError('reached end of file')
+		code, = struct.unpack(">B", data)
+		# If any of the top seven bits are set then we're about to overflow.
+		if result & 0xFE000000:
+			raise WOFF2CompressionError(
+				'UintBase128-encoded value exceeds 2**32-1')
+		result = (result << 7) | (code & 0x7f)
+		if (code & 0x80) == 0:
+			return result
+	raise WOFF2CompressionError(
+		'UintBase128-encoded sequence is longer than 5 bytes')
+
+woff2KnownTableTags = (
+	"cmap", "head", "hhea", "hmtx", "maxp", "name", "OS/2", "post", "cvt ",
+	"fpgm", "glyf", "loca", "prep", "CFF ", "VORG", "EBDT", "EBLC", "gasp",
+	"hdmx", "kern", "LTSH", "PCLT", "VDMX", "vhea", "vmtx", "BASE", "GDEF",
+	"GPOS", "GSUB", "EBSC", "JSTF", "MATH", "CBDT", "CBLC", "COLR", "CPAL",
+	"SVG ", "sbix", "acnt", "avar", "bdat", "bloc", "bsln", "cvar", "fdsc",
+	"feat", "fmtx", "fvar", "gvar", "hsty", "just", "lcar", "mort", "morx",
+	"opbd", "prop", "trak", "Zapf", "Silf", "Glat", "Gloc", "Feat", "Sill")
+
+woff2FlagsFormat = """\
+		> # big endian
+		flags: B  # table type and flags
+"""
+
+woff2FlagsSize = sstruct.calcsize(woff2FlagsFormat)
+
+woff2UnknownTagFormat = """\
+		> # big endian
+		tag: 4s  # 4-byte tag (optional)
+"""
+
+woff2UnknownTagSize = sstruct.calcsize(woff2UnknownTagFormat)
+
+class WOFF2DirectoryEntry(DirectoryEntry):
+	def fromFile(self, file):
+		sstruct.unpack(woff2FlagsFormat, file.read(woff2FlagsSize), self)
+		self.size = woff2FlagsSize
+		if self.flags & 0x3F == 0x3F:
+			sstruct.unpack(woff2UnknownTagFormat, file.read(woff2UnknownTagSize), self)
+			self.size += woff2UnknownTagSize
+		else:
+			self.tag = woff2KnownTableTags[self.flags & 0x3F]
+		# Bits 6 and 7 are reserved and must be 0.
+		if self.flags & 0xC0 != 0:
+			raise WOFF2CompressionError(
+				'bits 6-7 are reserved and must be 0.')
+		self.origLength = readBase128(file)
+		self.size += base128Size(self.origLength)
+		# Always transform the glyf and loca tables.
+		self.transform = False
+		self.transformLength = self.origLength
+		if self.tag == b'glyf' or self.tag == b'loca':
+			self.transform = True
+			self.transformLength = readBase128(file)
+			self.size += base128Size(self.transformLength)
+
+class WOFF2FlavorData():
+
+	Flavor = 'woff2'
+
+	def __init__(self, reader=None):
+		self.majorVersion = None
+		self.minorVersion = None
+		self.metaData = None
+		self.privData = None
+		if reader:
+			self.majorVersion = reader.majorVersion
+			self.minorVersion = reader.minorVersion
+			if reader.metaLength:
+				reader.file.seek(reader.metaOffset)
+				rawData = reader.file.read(reader.metaLength)
+				assert len(rawData) == reader.metaLength
+				import brotli
+				data = brotli.decompress(rawData)
+				assert len(data) == reader.metaOrigLength
+				self.metaData = data
+			if reader.privLength:
+				reader.file.seek(reader.privOffset)
+				data = reader.file.read(reader.privLength)
+				assert len(data) == reader.privLength
+				self.privData = data
+
+class WOFF2Buffer(): pass
+
+def convertWOFF2ToTTF(src_file, dst_file):
+	closeSrcStream = False
+	closeDstStream = False
+	if not hasattr(src_file, "read"):
+		closeSrcStream = True
+		src_file = open(src_file, "rb")
+	if not hasattr(dst_file, "write"):
+		closeDstStream = True
+		dst_file = open(dst_file, "wb")
+	signature = src_file.read(4)
+	src_file.seek(0)
+	if signature != b"wOF2":
+		from fontTools import ttLib
+		raise ttLib.TTLibError("Not a WOFF2 font (bad sfntVersion)")
+	woff2 = WOFF2Buffer()
+	sstruct.unpack(woff2DirectoryFormat, src_file.read(woff2DirectorySize), woff2)
+	index = []
+	tables = {}
+	for i in range(woff2.numTables):
+		entry = WOFF2DirectoryEntry()
+		entry.fromFile(src_file)
+		tag = Tag(entry.tag)
+		index.append(tag)
+		tables[tag] = entry
+		if i > 0:
+			entry.continueStream = True
+		else:
+			entry.continueStream = False
+
+	src_offset = src_file.tell()
+	dst_offset = sfntDirectorySize + woff2.numTables * SFNTDirectoryEntry.formatSize
+	for i, tag in enumerate(index):
+		table = tables[tag]
+		table.src_offset = src_offset
+		table.src_length = woff2.totalCompressedSize if i == 0 else 0
+		src_offset += table.src_length
+		src_offset = round4(src_offset)  # TOD0: reconsider (?!)
+		table.dst_offset = dst_offset
+		dst_offset += table.origLength
+		dst_offset = round4(dst_offset)
+
+	# start building the font
+	writer = SFNTWriter(dst_file, woff2.numTables, woff2.sfntVersion,
+		flavor=None, flavorData=None)
+	continue_valid = False
+	for i, tag in enumerate(index):
+		table = tables[tag]
+		src_buf = table.src_offset
+		transform_length = table.transformLength
+		if table.continueStream:
+			if not continue_valid:
+				raise WOFF2CompressionError('Hmm.')
+		else:
+			total_size = transform_length
+			for j in range(i+1, woff2.numTables):
+				if not tables[index[j]].continueStream:
+					break
+				total_size += tables[index[j]].transformLength
+			src_file.seek(src_buf)
+			compressed_data = src_file.read(woff2.totalCompressedSize)
+			uncompressed_data = woff2Uncompress(compressed_data, expected_size=total_size)
+			transform_data = uncompressed_data
+			continue_valid = True
+
+		if table.transform:
+			raise NotImplementedError
+		else:
+			writer[tag] = transform_data[:transform_length]
+		if continue_valid:
+			transform_data = transform_data[transform_length:]
+
+	writer.close()
+
+	if closeSrcStream:
+		src_file.close()
+	if closeDstStream:
+		dst_file.close()
+	return True
 
 def calcChecksum(data):
 	"""Calculate the checksum for an arbitrary block of data.
