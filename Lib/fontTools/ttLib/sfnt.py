@@ -46,19 +46,9 @@ class SFNTReader(object):
 			self.DirectoryEntry = WOFFDirectoryEntry
 			sstruct.unpack(woffDirectoryFormat, self.file.read(woffDirectorySize), self)
 		elif self.sfntVersion == b"wOF2":
-			import tempfile
 			self.flavor = "woff2"
-			woff2 = WOFF2Buffer()
-			sstruct.unpack(woff2DirectoryFormat, self.file.read(woff2DirectorySize), woff2)
-			self.flavorData = WOFF2FlavorData(woff2)
-			self.file.seek(0)
-			tmp = tempfile.TemporaryFile(prefix="woff2-fonttools")
-			convertWOFF2ToTTF(self.file, tmp)
-			self.file.close()
-			self.file = tmp
-			self.file.seek(0)
-			self.DirectoryEntry = SFNTDirectoryEntry
-			sstruct.unpack(sfntDirectoryFormat, self.file.read(sfntDirectorySize), self)
+			self.DirectoryEntry = WOFF2DirectoryEntry
+			sstruct.unpack(woff2DirectoryFormat, self.file.read(woff2DirectorySize), self)
 		else:
 			sstruct.unpack(sfntDirectoryFormat, self.file.read(sfntDirectorySize), self)
 		self.sfntVersion = Tag(self.sfntVersion)
@@ -67,14 +57,21 @@ class SFNTReader(object):
 			from fontTools import ttLib
 			raise ttLib.TTLibError("Not a TrueType or OpenType font (bad sfntVersion)")
 		self.tables = {}
+		offset = 0
 		for i in range(self.numTables):
 			entry = self.DirectoryEntry()
 			entry.fromFile(self.file)
 			self.tables[Tag(entry.tag)] = entry
+			if self.flavor == 'woff2':
+				entry.index = i
+				entry.offset = offset
+				offset += entry.transformLength
 
 		# Load flavor data if any
 		if self.flavor == "woff":
 			self.flavorData = WOFFFlavorData(self)
+		elif self.flavor == 'woff2':
+			self.flavorData = WOFF2FlavorData(self)
 
 	def has_key(self, tag):
 		return tag in self.tables
@@ -87,7 +84,10 @@ class SFNTReader(object):
 	def __getitem__(self, tag):
 		"""Fetch the raw table data."""
 		entry = self.tables[Tag(tag)]
-		data = entry.loadData (self.file)
+		if self.flavor == 'woff2':
+			data = entry.loadData(self)
+		else:
+			data = entry.loadData(self.file)
 		if self.checkChecksums:
 			if tag == 'head':
 				# Beh: we have to special-case the 'head' table.
@@ -478,13 +478,13 @@ class WOFFFlavorData():
 
 class WOFF2CompressionError(Exception): pass
 
-def woff2Uncompress(compressed_data, expected_size=None):
+def woff2Uncompress(compressed_data, uncompressed_size=None):
 	import brotli
 	try:
 		uncompressed_data = brotli.decompress(compressed_data)
 	except brotli.error as e:
 		raise WOFF2CompressionError(e)
-	if expected_size and len(uncompressed_data) != expected_size:
+	if uncompressed_size and len(uncompressed_data) != uncompressed_size:
 		raise WOFF2CompressionError("uncompressed buffer doesn't match expected size")
 	return uncompressed_data
 
@@ -561,6 +561,23 @@ class WOFF2DirectoryEntry(DirectoryEntry):
 			self.transformLength = readBase128(file)
 			self.size += base128Size(self.transformLength)
 
+	def loadData(self, reader):
+		if not hasattr(reader, 'uncompressed_data'):
+			uncompressed_size = 0
+			offset = woff2DirectorySize
+			for table in reader.tables.values():
+				offset += table.size
+				uncompressed_size += table.transformLength
+			reader.file.seek(offset)
+			compressed_data = reader.file.read(reader.totalCompressedSize)
+			reader.uncompressed_data = woff2Uncompress(
+				compressed_data, uncompressed_size)
+		transform_data = reader.uncompressed_data
+		if self.transform:
+			raise NotImplementedError
+		else:
+			return transform_data[self.offset:(self.offset+self.transformLength)]
+
 class WOFF2FlavorData():
 
 	Flavor = 'woff2'
@@ -586,87 +603,6 @@ class WOFF2FlavorData():
 				data = reader.file.read(reader.privLength)
 				assert len(data) == reader.privLength
 				self.privData = data
-
-class WOFF2Buffer(): pass
-
-def convertWOFF2ToTTF(src_file, dst_file):
-	closeSrcStream = False
-	closeDstStream = False
-	if not hasattr(src_file, "read"):
-		closeSrcStream = True
-		src_file = open(src_file, "rb")
-	if not hasattr(dst_file, "write"):
-		closeDstStream = True
-		dst_file = open(dst_file, "wb")
-	signature = src_file.read(4)
-	src_file.seek(0)
-	if signature != b"wOF2":
-		from fontTools import ttLib
-		raise ttLib.TTLibError("Not a WOFF2 font (bad sfntVersion)")
-	woff2 = WOFF2Buffer()
-	sstruct.unpack(woff2DirectoryFormat, src_file.read(woff2DirectorySize), woff2)
-	index = []
-	tables = {}
-	for i in range(woff2.numTables):
-		entry = WOFF2DirectoryEntry()
-		entry.fromFile(src_file)
-		tag = Tag(entry.tag)
-		index.append(tag)
-		tables[tag] = entry
-		if i > 0:
-			entry.continueStream = True
-		else:
-			entry.continueStream = False
-
-	src_offset = src_file.tell()
-	dst_offset = sfntDirectorySize + woff2.numTables * SFNTDirectoryEntry.formatSize
-	for i, tag in enumerate(index):
-		table = tables[tag]
-		table.src_offset = src_offset
-		table.src_length = woff2.totalCompressedSize if i == 0 else 0
-		src_offset += table.src_length
-		src_offset = round4(src_offset)  # TOD0: reconsider (?!)
-		table.dst_offset = dst_offset
-		dst_offset += table.origLength
-		dst_offset = round4(dst_offset)
-
-	# start building the font
-	writer = SFNTWriter(dst_file, woff2.numTables, woff2.sfntVersion,
-		flavor=None, flavorData=None)
-	continue_valid = False
-	for i, tag in enumerate(index):
-		table = tables[tag]
-		src_buf = table.src_offset
-		transform_length = table.transformLength
-		if table.continueStream:
-			if not continue_valid:
-				raise WOFF2CompressionError('Hmm.')
-		else:
-			total_size = transform_length
-			for j in range(i+1, woff2.numTables):
-				if not tables[index[j]].continueStream:
-					break
-				total_size += tables[index[j]].transformLength
-			src_file.seek(src_buf)
-			compressed_data = src_file.read(woff2.totalCompressedSize)
-			uncompressed_data = woff2Uncompress(compressed_data, expected_size=total_size)
-			transform_data = uncompressed_data
-			continue_valid = True
-
-		if table.transform:
-			raise NotImplementedError
-		else:
-			writer[tag] = transform_data[:transform_length]
-		if continue_valid:
-			transform_data = transform_data[transform_length:]
-
-	writer.close()
-
-	if closeSrcStream:
-		src_file.close()
-	if closeDstStream:
-		dst_file.close()
-	return True
 
 def calcChecksum(data):
 	"""Calculate the checksum for an arbitrary block of data.
