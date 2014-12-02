@@ -85,10 +85,12 @@ class SFNTReader(object):
 		"""Fetch the raw table data."""
 		entry = self.tables[Tag(tag)]
 		if self.flavor == 'woff2':
+			# woff2 font data is read from file just once, then stored in self.fontData
 			data = entry.loadData(self)
 		else:
 			data = entry.loadData(self.file)
-		if self.checkChecksums:
+		if self.checkChecksums and self.flavor != 'woff2':
+			# woff2 table entries don't contain the original checkSum
 			if tag == 'head':
 				# Beh: we have to special-case the 'head' table.
 				checksum = calcChecksum(data[:8] + b'\0\0\0\0' + data[12:])
@@ -476,21 +478,6 @@ class WOFFFlavorData():
 				assert len(data) == reader.privLength
 				self.privData = data
 
-class WOFF2CompressionError(Exception): pass
-
-def woff2Uncompress(compressed_data, uncompressed_size=None):
-	import brotli
-	try:
-		uncompressed_data = brotli.decompress(compressed_data)
-	except brotli.error as e:
-		raise WOFF2CompressionError(e)
-	if uncompressed_size and len(uncompressed_data) != uncompressed_size:
-		raise WOFF2CompressionError("uncompressed buffer doesn't match expected size")
-	return uncompressed_data
-
-def round4(value):
-	return (value + 3) & ~3
-
 def base128Size(n):
 	size = 1
 	while n >= 128:
@@ -502,18 +489,18 @@ def readBase128(file):
 	result = 0
 	for i in range(5):
 		data = file.read(1)
-		if len(data) == 0:
-			raise WOFF2CompressionError('reached end of file')
+		assert len(data) != 0
 		code, = struct.unpack(">B", data)
 		# If any of the top seven bits are set then we're about to overflow.
 		if result & 0xFE000000:
-			raise WOFF2CompressionError(
-				'UintBase128-encoded value exceeds 2**32-1')
+			from fontTools import ttlib
+			raise ttlib.TTLibError('UintBase128-encoded value exceeds 2**32-1')
 		result = (result << 7) | (code & 0x7f)
 		if (code & 0x80) == 0:
 			return result
-	raise WOFF2CompressionError(
-		'UintBase128-encoded sequence is longer than 5 bytes')
+	# Make sure not to exceed the size bound
+	from fontTools import ttlib
+	raise ttlib.TTLibError('UintBase128-encoded sequence is longer than 5 bytes')
 
 woff2KnownTableTags = (
 	"cmap", "head", "hhea", "hmtx", "maxp", "name", "OS/2", "post", "cvt ",
@@ -549,8 +536,8 @@ class WOFF2DirectoryEntry(DirectoryEntry):
 			self.tag = woff2KnownTableTags[self.flags & 0x3F]
 		# Bits 6 and 7 are reserved and must be 0.
 		if self.flags & 0xC0 != 0:
-			raise WOFF2CompressionError(
-				'bits 6-7 are reserved and must be 0.')
+			from fontTools import ttLib
+			raise ttLib.TTLibError('bits 6-7 are reserved and must be 0')
 		self.origLength = readBase128(file)
 		self.size += base128Size(self.origLength)
 		# Always transform the glyf and loca tables.
@@ -562,21 +549,21 @@ class WOFF2DirectoryEntry(DirectoryEntry):
 			self.size += base128Size(self.transformLength)
 
 	def loadData(self, reader):
-		if not hasattr(reader, 'uncompressed_data'):
-			uncompressed_size = 0
-			offset = woff2DirectorySize
+		if not hasattr(reader, 'fontData'):
+			import brotli
+			unncompressedSize = 0
+			startOffset = woff2DirectorySize
 			for table in reader.tables.values():
-				offset += table.size
-				uncompressed_size += table.transformLength
-			reader.file.seek(offset)
-			compressed_data = reader.file.read(reader.totalCompressedSize)
-			reader.uncompressed_data = woff2Uncompress(
-				compressed_data, uncompressed_size)
-		transform_data = reader.uncompressed_data
+				startOffset += table.size
+				unncompressedSize += table.transformLength
+			reader.file.seek(startOffset)
+			data = reader.file.read(reader.totalCompressedSize)
+			reader.fontData = brotli.decompress(data)
+			assert len(reader.fontData) == unncompressedSize
 		if self.transform:
 			raise NotImplementedError
 		else:
-			return transform_data[self.offset:(self.offset+self.transformLength)]
+			return reader.fontData[self.offset:(self.offset+self.origLength)]
 
 class WOFF2FlavorData():
 
