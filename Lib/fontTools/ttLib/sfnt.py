@@ -17,6 +17,10 @@ from fontTools.misc.py23 import *
 from fontTools.misc import sstruct
 from fontTools.ttLib import getSearchRange
 import struct
+import sys
+import array
+from fontTools.ttLib import getTableModule, getTableClass
+from fontTools.ttLib.tables import ttProgram
 
 
 class SFNTReader(object):
@@ -85,7 +89,7 @@ class SFNTReader(object):
 		"""Fetch the raw table data."""
 		entry = self.tables[Tag(tag)]
 		if self.flavor == 'woff2':
-			# woff2 font data is read from file just once, then stored in self.fontData
+			# woff2 font data is read from file only once, then stored in self._fontData
 			data = entry.loadData(self)
 		else:
 			data = entry.loadData(self.file)
@@ -478,29 +482,49 @@ class WOFFFlavorData():
 				assert len(data) == reader.privLength
 				self.privData = data
 
-def base128Size(n):
-	size = 1
-	while n >= 128:
-		size += 1
-		n >>= 7
-	return size
 
-def readBase128(file):
+def readUInt128(file):
 	result = 0
+	size = 0
 	for i in range(5):
 		data = file.read(1)
-		assert len(data) != 0
+		if len(data) == 0:
+			from fontTools import ttlib
+			raise ttlib.TTLibError('Not enough data to unpack UIntBase128 value')
+		size += 1
 		code, = struct.unpack(">B", data)
 		# If any of the top seven bits are set then we're about to overflow.
 		if result & 0xFE000000:
 			from fontTools import ttlib
-			raise ttlib.TTLibError('UintBase128-encoded value exceeds 2**32-1')
+			raise ttlib.TTLibError('UIntBase128 value exceeds 2**32-1')
 		result = (result << 7) | (code & 0x7f)
 		if (code & 0x80) == 0:
-			return result
+			return result, size
 	# Make sure not to exceed the size bound
 	from fontTools import ttlib
-	raise ttlib.TTLibError('UintBase128-encoded sequence is longer than 5 bytes')
+	raise ttlib.TTLibError('UIntBase128-encoded sequence is longer than 5 bytes')
+
+def unpack255UShort(data):
+	kWordCode = 253
+	kOneMoreByteCode2 = 254
+	kOneMoreByteCode1 = 255
+	kLowestUCode = 253
+	code, = struct.unpack(">B", data[:1])
+	data = data[1:]
+	if code == kWordCode:
+		result, = struct.unpack(">H", data[:2])
+		data = data[2:]
+	elif code == kOneMoreByteCode1:
+		result, = struct.unpack(">B", data[:1])
+		result += kLowestUCode
+		data = data[1:]
+	elif code == kOneMoreByteCode2:
+		result, = struct.unpack(">B", data[:1])
+		result += kLowestUCode * 2
+		data = data[1:]
+	else:
+		result = code
+	return result, data
 
 woff2KnownTableTags = (
 	"cmap", "head", "hhea", "hmtx", "maxp", "name", "OS/2", "post", "cvt ",
@@ -534,36 +558,311 @@ class WOFF2DirectoryEntry(DirectoryEntry):
 			self.size += woff2UnknownTagSize
 		else:
 			self.tag = woff2KnownTableTags[self.flags & 0x3F]
+		self.tag = Tag(self.tag)
 		# Bits 6 and 7 are reserved and must be 0.
 		if self.flags & 0xC0 != 0:
 			from fontTools import ttLib
 			raise ttLib.TTLibError('bits 6-7 are reserved and must be 0')
-		self.origLength = readBase128(file)
-		self.size += base128Size(self.origLength)
+		self.origLength, nBytes = readUInt128(file)
+		self.size += nBytes
 		# Always transform the glyf and loca tables.
 		self.transform = False
 		self.transformLength = self.origLength
-		if self.tag == b'glyf' or self.tag == b'loca':
+		if self.tag == 'glyf' or self.tag == 'loca':
 			self.transform = True
-			self.transformLength = readBase128(file)
-			self.size += base128Size(self.transformLength)
+			self.transformLength, nBytes = readUInt128(file)
+			self.size += nBytes
 
 	def loadData(self, reader):
-		if not hasattr(reader, 'fontData'):
+		if not hasattr(reader, '_fontData'):
 			import brotli
 			unncompressedSize = 0
-			startOffset = woff2DirectorySize
+			compressedDataOffset = woff2DirectorySize
 			for table in reader.tables.values():
-				startOffset += table.size
+				compressedDataOffset += table.size
 				unncompressedSize += table.transformLength
-			reader.file.seek(startOffset)
-			data = reader.file.read(reader.totalCompressedSize)
-			reader.fontData = brotli.decompress(data)
-			assert len(reader.fontData) == unncompressedSize
-		if self.transform:
-			raise NotImplementedError
+			reader.file.seek(compressedDataOffset)
+			compressedData = reader.file.read(reader.totalCompressedSize)
+			reader._fontData = brotli.decompress(compressedData)
+			assert len(reader._fontData) == unncompressedSize
+		if not self.transform:
+			return reader._fontData[self.offset:(self.offset+self.origLength)]
 		else:
-			return reader.fontData[self.offset:(self.offset+self.origLength)]
+			if self.tag not in (b'glyf', b'loca'):
+				from fontTools import ttLib
+				raise ttLib.TTLibError("Unknown transformed table: '%s'" % tag)
+			if self.tag == b'glyf':
+				# check if processing was already done for loca table
+				if hasattr(reader, '_glyfData'):
+					return reader._glyfData
+				if b'loca' not in reader.tables:
+					from fontTools import ttLib
+					raise ttLib.TTLibError("missing 'loca' table directory entry")
+				glyf = self
+				loca = reader.tables['loca']
+			elif self.tag == b'loca':
+				# check if processing was already done for glyf table
+				if hasattr(reader, '_locaData'):
+					return reader._locaData
+				if b'glyf' not in reader.tables:
+					from fontTools import ttLib
+					raise ttLib.TTLibError("can't reconstruct 'loca' without 'glyf' table")
+				glyf = reader.tables['glyf']
+				loca = self
+			rawGlyfData = reader._fontData[glyf.offset:(glyf.offset+glyf.transformLength)]
+			table = WOFF2GlyfTable('glyf')
+			glyfData, locaData = table.reconstruct(rawGlyfData, glyf.origLength, loca.origLength)
+			reader._glyfData = glyfData
+			reader._locaData = locaData
+			return glyfData if self.tag == b'glyf' else locaData
+
+
+class WOFF2GlyfTable(getTableClass('glyf')):
+
+	def reconstruct(self, data, glyfTableSize, locaTableSize):
+		dataSize = len(data)
+		version, numGlyphs, indexFormat = struct.unpack('>IHH', data[:8])
+		data = data[8:]
+
+		substreamOffset = 8 + 7 * 4
+		if substreamOffset > len(data):
+			from fontTools import ttLib
+			raise ttLib.TTLibError("not enough 'glyf' table data")
+		substreams = []
+		for i in range(7):
+			substreamSize, = struct.unpack('>I', data[:4])
+			data = data[4:]
+			if substreamSize > (dataSize - substreamOffset):
+				from fontTools import ttLib
+				raise ttLib.TTLibError("not enough 'glyf' table data")
+			substreams.append(substreamSize)
+			substreamOffset += substreamSize
+
+		nContourStream = data[:substreams[0]]
+		data = data[substreams[0]:]
+		self.nContourStream = array.array("h", nContourStream)
+		if sys.byteorder != "big":
+			self.nContourStream.byteswap()
+
+		self.nPointsStream = data[:substreams[1]]
+		data = data[substreams[1]:]
+
+		self.flagStream = data[:substreams[2]]
+		data = data[substreams[2]:]
+
+		self.glyphStream = data[:substreams[3]]
+		data = data[substreams[3]:]
+
+		self.compositeStream = data[:substreams[4]]
+		data = data[substreams[4]:]
+
+		bboxStream = data[:substreams[5]]
+		data = data[substreams[5]:]
+		bitmapLength = ((numGlyphs + 31) >> 5) << 2
+		self.bboxBitmap = array.array('B', bboxStream[:bitmapLength])
+		self.bboxStream = bboxStream[bitmapLength:]
+
+		self.instructionStream = data[:substreams[6]]
+		data = data[substreams[6]:]
+
+		if len(data) > 0:
+			from fontTools import ttLib
+			raise ttLib.TTLibError("too much 'glyf' table data: expected %d, received %d bytes" %
+				(substreamOffset, dataSize))
+
+		self.glyphOrder = glyphOrder = []
+		for i in range(numGlyphs):
+			glyphName = "glyph%d" % i
+			glyphOrder.append(glyphName)
+
+		self.glyphs = {}
+		for i in range(numGlyphs):
+			glyphName = glyphOrder[i]
+			glyph = WOFF2Glyph(i, self)
+			self.glyphs[glyphName] = glyph
+
+		locations = []
+		currentLocation = 0
+		dataList = []
+		for i in range(numGlyphs):
+			glyphName = glyphOrder[i]
+			glyph = self.glyphs[glyphName]
+			glyphData = glyph.compile(self, recalcBBoxes=False)
+			glyphSize = len(glyphData)
+			if glyphSize > glyfTableSize - currentLocation:
+				from fontTools import ttLib
+				raise ttLib.TTLibError('Reconstructed glyf table exceeds original size')
+			locations.append(currentLocation)
+			currentLocation += glyphSize
+			dataList.append(glyphData)
+		locations.append(currentLocation)
+
+		if currentLocation < 0x20000:
+			# See if we can pad any odd-lengthed glyphs to allow loca
+			# table to use the short offsets.
+			indices = [i for i, glyphData in enumerate(dataList) if len(glyphData) % 2 == 1]
+			if indices and currentLocation + len(indices) < 0x20000:
+				# It fits.  Do it.
+				for i in indices:
+					dataList[i] += '\0'
+				currentLocation = 0
+				for i,glyphData in enumerate(dataList):
+					self.locations[i] = currentLocation
+					currentLocation += len(glyphData)
+				self.locations[len(dataList)] = currentLocation
+
+		glyfData = bytesjoin(dataList)
+
+		locaOffsetSize = 4 if indexFormat else 2
+		if locaOffsetSize * len(locations) > locaTableSize:
+			from fontTools import ttLib
+			raise ttLib.TTLibError('Reconstructed loca table exceeds original size')
+		if indexFormat == 0:
+			locations = array.array("H", [value >> 1 for value in locations])
+		else:
+			locations = array.array("I", locations)
+		if sys.byteorder != "big":
+			locations.byteswap()
+		locaData = locations.tostring()
+
+		return glyfData, locaData
+
+
+class WOFF2Glyph(getTableModule('glyf').Glyph):
+
+	def __init__(self, index, glyfTable):
+		self.numberOfContours = glyfTable.nContourStream[index]
+		if self.numberOfContours < 0:
+			self.decompileComponents(glyfTable)
+		elif self.numberOfContours > 0:
+			self.decompileCoordinates(glyfTable)
+		self.decompileBBox(index, glyfTable)
+
+	def decompileBBox(self, index, glyfTable):
+		if self.numberOfContours == 0:
+			return
+		bitmap = glyfTable.bboxBitmap
+		bbox = glyfTable.bboxStream
+		haveBBox = bitmap[index >> 3] & (0x80 >> (index & 7))
+		if self.numberOfContours < 0 and not haveBBox:
+			raise ttLib.TTLibError('no bbox values for composite glyph %d' % index)
+		if haveBBox:
+			self.xMin, self.yMin, self.xMax, self.yMax = struct.unpack('>hhhh', bbox[:8])
+			glyfTable.bboxStream = bbox[8:]
+		else:
+			self.recalcBounds(glyfTable)
+
+	def decompileInstructions(self, glyfTable):
+		glyphStream = glyfTable.glyphStream
+		instructionStream = glyfTable.instructionStream
+		instructionLength, glyphStream = unpack255UShort(glyphStream)
+		self.program = ttProgram.Program()
+		self.program.fromBytecode(instructionStream[:instructionLength])
+		glyfTable.glyphStream = glyphStream
+		glyfTable.instructionStream = instructionStream[instructionLength:]
+
+	def decompileComponents(self, glyfTable):
+		data = glyfTable.compositeStream
+		self.components = []
+		more = 1
+		haveInstructions = 0
+		while more:
+			component = getTableModule('glyf').GlyphComponent()
+			more, haveInstr, data = component.decompile(data, glyfTable)
+			haveInstructions = haveInstructions | haveInstr
+			self.components.append(component)
+		glyfTable.compositeStream = data
+		if haveInstructions:
+			self.decompileInstructions(glyfTable)
+
+	def decompileCoordinates(self, glyfTable):
+		nPointsStream = glyfTable.nPointsStream
+		endPtsOfContours = []
+		endPoint = -1
+		for i in range(self.numberOfContours):
+			ptsOfContour, nPointsStream = unpack255UShort(nPointsStream)
+			endPoint += ptsOfContour
+			endPtsOfContours.append(endPoint)
+		self.endPtsOfContours = endPtsOfContours
+		nPoints = endPoint + 1
+		glyfTable.nPointsStream = nPointsStream
+		self.decodeTriplets(nPoints, glyfTable)
+		self.decompileInstructions(glyfTable)
+
+	def decodeTriplets(self, nPoints, glyfTable):
+
+		def withSign(flag, baseval):
+			assert 0 <= baseval and baseval < 65536, 'integer overflow'
+			return baseval if flag & 1 else -baseval
+
+		flagStream = glyfTable.flagStream
+		flagSize = nPoints
+		if flagSize > len(flagStream):
+			raise ttLib.TTLibError("not enough 'flagStream' data")
+		flagsData = flagStream[:flagSize]
+		glyfTable.flagStream = flagStream[flagSize:]
+		flags = array.array('B', flagsData)
+
+		glyphStream = glyfTable.glyphStream
+		triplets = array.array('B', glyphStream)
+		nTriplets = len(triplets)
+		assert nPoints <= nTriplets
+
+		x = 0
+		y = 0
+		coordinates = getTableModule('glyf').GlyphCoordinates.zeros(nPoints)
+		onCurves = []
+		tripletIndex = 0
+		for i in range(nPoints):
+			flag = flags[i]
+			onCurve = not bool(flag >> 7)
+			flag &= 0x7f
+			if flag < 84:
+				nBytes = 1
+			elif flag < 120:
+				nBytes = 2
+			elif flag < 124:
+				nBytes = 3
+			else:
+				nBytes = 4
+			assert ((tripletIndex + nBytes) <= nTriplets)
+			if flag < 10:
+				dx = 0
+				dy = withSign(flag, ((flag & 14) << 7) + triplets[tripletIndex])
+			elif flag < 20:
+				dx = withSign(flag, (((flag - 10) & 14) << 7) + triplets[tripletIndex])
+				dy = 0
+			elif flag < 84:
+				b0 = flag - 20
+				b1 = triplets[tripletIndex]
+				dx = withSign(flag, 1 + (b0 & 0x30) + (b1 >> 4))
+				dy = withSign(flag >> 1, 1 + ((b0 & 0x0c) << 2) + (b1 & 0x0f))
+			elif flag < 120:
+				b0 = flag - 84
+				dx = withSign(flag, 1 + ((b0 // 12) << 8) + triplets[tripletIndex])
+				dy = withSign(flag >> 1,
+					1 + (((b0 % 12) >> 2) << 8) + triplets[tripletIndex + 1])
+			elif flag < 124:
+				b2 = triplets[tripletIndex + 1]
+				dx = withSign(flag, (triplets[tripletIndex] << 4) + (b2 >> 4))
+				dy = withSign(flag >> 1,
+					((b2 & 0x0f) << 8) + triplets[tripletIndex + 2])
+			else:
+				dx = withSign(flag,
+					(triplets[tripletIndex] << 8) + triplets[tripletIndex + 1])
+				dy = withSign(flag >> 1,
+					(triplets[tripletIndex + 2] << 8) + triplets[tripletIndex + 3])
+			tripletIndex += nBytes
+			x += dx
+			y += dy
+			coordinates[i] = (x, y)
+			onCurves.append(int(onCurve))
+		bytesConsumed = tripletIndex
+		glyfTable.glyphStream = glyphStream[bytesConsumed:]
+
+		self.flags = array.array("B", onCurves)
+		self.coordinates = coordinates
+
 
 class WOFF2FlavorData():
 
