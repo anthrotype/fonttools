@@ -111,11 +111,12 @@ class SFNTReader(object):
 				decompressedData = self.decompressWoff2()
 				self._fontBuffer = StringIO(decompressedData)
 			if tag == 'loca':
-				# ensure glyf table is loaded before loca
+				# WOFF2 contains no loca data, so there's no point trying to load it.
+				# Loca must be calculated from glyf, so make sure glyf is loaded before
 				glyfEntry = self.tables['glyf']
 				if not hasattr(glyfEntry, 'table'):
 					glyfEntry.loadData(self._fontBuffer)
-				# compile loca from reconstructed glyf using original indexFormat
+				# compile loca from reconstructed glyf using the original 'indexFormat'
 				return compileLoca(glyfEntry.table, glyfEntry.table.indexFormat)
 			data = entry.loadData(self._fontBuffer)
 		else:
@@ -990,5 +991,5 @@ def calcChecksum(data):
 
 
 if __name__ == "__main__":
-    import doctest
-    doctest.testmod()
+	import doctest
+	doctest.testmod()
