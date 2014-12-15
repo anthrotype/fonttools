@@ -618,8 +618,6 @@ def compileLoca(glyfTable, indexToLocFormat=1):
 	""" Calculate offsets using glyph data from 'glyfTable', and return compiled
 	loca table data. If 'indexToLocFormat' is 0, use 'short' loca version.
 	"""
-	import sys
-	import array
 	# calculate loca offsets
 	locations = []
 	currentLocation = 0
