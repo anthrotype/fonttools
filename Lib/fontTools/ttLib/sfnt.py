@@ -809,29 +809,6 @@ class WOFF2Glyph(getTableModule('glyf').Glyph):
 			self.decompileCoordinates(glyfTable)
 		self.decompileBBox(index, glyfTable)
 
-	def decompileBBox(self, index, glyfTable):
-		if self.numberOfContours == 0:
-			return
-		bitmap = glyfTable.bboxBitmap
-		bbox = glyfTable.bboxStream
-		haveBBox = bitmap[index >> 3] & (0x80 >> (index & 7))
-		if self.numberOfContours < 0 and not haveBBox:
-			raise ttLib.TTLibError('no bbox values for composite glyph %d' % index)
-		if haveBBox:
-			self.xMin, self.yMin, self.xMax, self.yMax = struct.unpack('>hhhh', bbox[:8])
-			glyfTable.bboxStream = bbox[8:]
-		else:
-			self.recalcBounds(glyfTable)
-
-	def decompileInstructions(self, glyfTable):
-		glyphStream = glyfTable.glyphStream
-		instructionStream = glyfTable.instructionStream
-		instructionLength, glyphStream = unpack255UShort(glyphStream)
-		self.program = ttProgram.Program()
-		self.program.fromBytecode(instructionStream[:instructionLength])
-		glyfTable.glyphStream = glyphStream
-		glyfTable.instructionStream = instructionStream[instructionLength:]
-
 	def decompileComponents(self, glyfTable):
 		data = glyfTable.compositeStream
 		self.components = []
@@ -859,6 +836,29 @@ class WOFF2Glyph(getTableModule('glyf').Glyph):
 		glyfTable.nPointsStream = nPointsStream
 		self.decodeTriplets(nPoints, glyfTable)
 		self.decompileInstructions(glyfTable)
+
+	def decompileBBox(self, index, glyfTable):
+		if self.numberOfContours == 0:
+			return
+		bitmap = glyfTable.bboxBitmap
+		bbox = glyfTable.bboxStream
+		haveBBox = bitmap[index >> 3] & (0x80 >> (index & 7))
+		if self.numberOfContours < 0 and not haveBBox:
+			raise ttLib.TTLibError('no bbox values for composite glyph %d' % index)
+		if haveBBox:
+			self.xMin, self.yMin, self.xMax, self.yMax = struct.unpack('>hhhh', bbox[:8])
+			glyfTable.bboxStream = bbox[8:]
+		else:
+			self.recalcBounds(glyfTable)
+
+	def decompileInstructions(self, glyfTable):
+		glyphStream = glyfTable.glyphStream
+		instructionStream = glyfTable.instructionStream
+		instructionLength, glyphStream = unpack255UShort(glyphStream)
+		self.program = ttProgram.Program()
+		self.program.fromBytecode(instructionStream[:instructionLength])
+		glyfTable.glyphStream = glyphStream
+		glyfTable.instructionStream = instructionStream[instructionLength:]
 
 	def decodeTriplets(self, nPoints, glyfTable):
 
