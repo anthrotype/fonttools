@@ -388,7 +388,6 @@ class SFNTWriter(object):
 		checksum = sum(checksums) & 0xffffffff
 		# BiboAfba!
 		checksumadjustment = (0xB1B0AFBA - checksum) & 0xffffffff
-		print('checkSumAdjustment: %d' % checksumadjustment)
 		return checksumadjustment
 
 	def writeMasterChecksum(self, directory):
