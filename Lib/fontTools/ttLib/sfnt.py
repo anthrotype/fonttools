@@ -260,6 +260,7 @@ class SFNTWriter(object):
 		if self.flavor in ("woff", "woff2"):
 			self.reserved = 0
 
+			# size of uncompressed font
 			self.totalSfntSize = sfntDirectorySize
 			self.totalSfntSize += sfntDirectoryEntrySize * len(tables)
 			for tag, entry in tables:
@@ -272,9 +273,10 @@ class SFNTWriter(object):
 				compress = zlib.compress
 				FlavorData = WOFFFlavorData
 
-				length = woffDirectorySize + len(tables) * woffDirectoryEntrySize
+				# start calculating total size of WOFF font
+				offset = woffDirectorySize + len(tables) * woffDirectoryEntrySize
 				for tag, entry in tables:
-					length = length + ((entry.length + 3) & ~3)
+					offset = offset + ((entry.length + 3) & ~3)
 			else:
 				self.signature = b"wOF2"
 
@@ -282,20 +284,21 @@ class SFNTWriter(object):
 				compress = brotli.compress
 				FlavorData = WOFF2FlavorData
 
-				length = woff2DirectorySize
+				# start calculating total size of WOFF2 font
+				offset = woff2DirectorySize
 				for tag, entry in tables:
-					length += tableEntrySize(entry)
+					offset += tableEntrySize(entry)
 
 				# update head's checkSumAdjustment
 				self.writeMasterChecksum(b"")
-				# compres font data stream
+				# compress font data
 				self._fontBuffer.seek(0)
 				compressedData = compress(self._fontBuffer.read(), brotli.MODE_FONT)
 				self.totalCompressedSize = len(compressedData)
+				offset += self.totalCompressedSize
+				offset = (offset + 3) & ~3
 
-				length += self.totalCompressedSize
-				length = (length + 3) & ~3
-
+			# calculate offsets and lengths for any metadata and/or private data
 			compressedMetaData = privData = b""
 			data = self.flavorData if self.flavorData else FlavorData()
 			if data.majorVersion is not None and data.minorVersion is not None:
@@ -308,22 +311,25 @@ class SFNTWriter(object):
 					self.majorVersion = self.minorVersion = 0
 			if data.metaData:
 				self.metaOrigLength = len(data.metaData)
-				self.metaOffset = length
+				self.metaOffset = offset
+				# compress metadata (using either zlib or brotli)
 				compressedMetaData = compress(data.metaData)
 				self.metaLength = len(compressedMetaData)
-				length += self.metaLength
+				offset += self.metaLength
 			else:
 				self.metaOffset = self.metaLength = self.metaOrigLength = 0
 			if data.privData:
 				privData = data.privData
-				length = (length + 3) & ~3
-				self.privOffset = length
+				# make sure private data is padded to 4-byte boundary
+				offset = (offset + 3) & ~3
+				self.privOffset = offset
 				self.privLength = len(privData)
-				length += self.privLength
+				offset += self.privLength
 			else:
 				self.privOffset = self.privLength = 0
 
-			self.length = length
+			# total size of WOFF/WOFF2 font, including any metadata or private data
+			self.length = offset
 		else:
 			assert not self.flavor,  "Unknown flavor '%s'" % self.flavor
 			pass
@@ -340,6 +346,7 @@ class SFNTWriter(object):
 			self.writeMasterChecksum(directory)
 		self.file.seek(0)
 		self.file.write(directory)
+
 		if self.flavor == "woff2":
 			# finally write WOFF2 compressed font data to disk
 			self.file.write(compressedData)
@@ -350,7 +357,6 @@ class SFNTWriter(object):
 				assert self.file.tell() == self.metaOffset
 				self.file.write(compressedMetaData)
 				if privData:
-					# insert padding after metadata if followed by private data
 					write4BytePadding(self.file)
 			if privData:
 				self.file.seek(self.privOffset)
