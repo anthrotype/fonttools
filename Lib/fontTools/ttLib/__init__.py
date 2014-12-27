@@ -201,6 +201,9 @@ class TTFont(object):
 		tags = list(self.keys())
 		if "GlyphOrder" in tags:
 			tags.remove("GlyphOrder")
+		if self.flavor == "woff2" and "DSIG" in tags:
+			# WOFF2 encoding can invalidate the 'DSIG' table, hence it must be removed
+			tags.remove("DSIG")
 		numTables = len(tags)
 		if reorderTables:
 			import tempfile

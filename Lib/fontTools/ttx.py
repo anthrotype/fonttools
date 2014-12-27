@@ -174,6 +174,19 @@ class Options(object):
 def ttList(input, output, options):
 	ttf = TTFont(input, fontNumber=options.fontNumber, lazy=True)
 	reader = ttf.reader
+	if reader.flavor == "woff2":
+		from fontTools.ttLib.sfnt import calcChecksum
+		tags = reader.tableOrder
+		offset = 12 + 16 * len(tags)
+		for tag in reader.tableOrder:
+			entry = reader.tables[tag]
+			data = reader[tag]
+			if tag == 'head':
+				entry.checkSum = calcChecksum(data[:8] + b"\0\0\0\0" + data[12:])
+			else:
+				entry.checkSum = calcChecksum(data)
+			entry.offset = offset
+			offset = offset + ((entry.length + 3) & ~3)
 	tags = sorted(reader.keys())
 	print('Listing table info for "%s":' % input)
 	format = "    %4s  %10s  %7s  %7s"
@@ -181,11 +194,12 @@ def ttList(input, output, options):
 	print(format % ("----", "----------", "-------", "-------"))
 	for tag in tags:
 		entry = reader.tables[tag]
+		length = entry.origLength if reader.flavor == "woff2" else entry.length
 		checkSum = int(entry.checkSum)
 		if checkSum < 0:
 			checkSum = checkSum + 0x100000000
 		checksum = "0x%08X" % checkSum
-		print(format % (tag, checksum, entry.length, entry.offset))
+		print(format % (tag, checksum, length, entry.offset))
 	print()
 	ttf.close()
 
@@ -242,6 +256,8 @@ def guessFileType(fileName):
 		return "TTF"
 	elif head == "wOFF":
 		return "WOFF"
+	elif head == "wOF2":
+		return "WOFF2"
 	elif head.lower() == "<?xm":
 		# Use 'latin1' because that can't fail.
 		header = tostr(header, 'latin1')
@@ -266,7 +282,7 @@ def parseOptions(args):
 	
 	for input in files:
 		tp = guessFileType(input)
-		if tp in ("OTF", "TTF", "TTC", "WOFF"):
+		if tp in ("OTF", "TTF", "TTC", "WOFF", "WOFF2"):
 			extension = ".ttx"
 			if options.listTables:
 				action = ttList
