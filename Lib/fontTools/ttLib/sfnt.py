@@ -197,26 +197,23 @@ class SFNTWriter(object):
 	
 	def __setitem__(self, tag, data):
 		"""Write raw table data to disk."""
-		dst = self._fontBuffer if self.flavor == "woff2" else self.file
-		reuse = False
 		if tag in self.tables:
-			# We've written this table to file before. If the length
-			# of the data is still the same, we allow overwriting it.
-			entry = self.tables[tag]
-			assert not hasattr(entry.__class__, 'encodeData')
-			if len(data) != entry.length:
-				from fontTools import ttLib
-				raise ttLib.TTLibError("cannot rewrite '%s' table: length does not match directory entry" % tag)
-			reuse = True
-		else:
-			entry = self.DirectoryEntry()
-			entry.tag = tag
-			if self.flavor == "woff2":
-				entry.flags = knownTableIndex(tag)
-				entry.transform = False
-				# only glyf and loca tables needs to be transformed
-				if tag in ('glyf', 'loca'):
-					entry.transform = True
+			from fontTools import ttLib
+			raise ttLib.TTLibError("cannot rewrite '%s' table: length does not match directory entry" % tag)
+
+		entry = self.DirectoryEntry()
+		entry.tag = tag
+		entry.offset = self.nextTableOffset
+
+		if self.flavor in ("woff", "woff2"):
+			entry.origOffset = self.origNextTableOffset
+
+		if self.flavor == "woff2":
+			entry.flags = knownTableIndex(tag)
+			entry.transform = False
+			# only glyf and loca tables needs to be transformed
+			if tag in ('glyf', 'loca'):
+				entry.transform = True
 
 		if tag == 'head':
 			entry.checkSum = calcChecksum(data[:8] + b'\0\0\0\0' + data[12:])
@@ -225,27 +222,23 @@ class SFNTWriter(object):
 		else:
 			entry.checkSum = calcChecksum(data)
 
-		if self.flavor in ("woff", "woff2"):
-			entry.origOffset = self.origNextTableOffset
-
-		entry.offset = self.nextTableOffset
+		dst = self._fontBuffer if self.flavor == "woff2" else self.file
 		entry.saveData(dst, data)
 
-		if not reuse:
-			if self.flavor == "woff2":
-				# uncompressed font data stream requires no padding between tables
-				self.nextTableOffset += entry.length
-			else:
-				self.nextTableOffset = self.nextTableOffset + ((entry.length + 3) & ~3)
-				# Add NUL bytes to pad the table data to a 4-byte boundary.
-				# Don't depend on f.seek() as we need to add the padding even if no
-				# subsequent write follows (seek is lazy), ie. after the final table
-				# in the font.
-				dst.write(b'\0' * (self.nextTableOffset - dst.tell()))
-				assert self.nextTableOffset == dst.tell()
+		if self.flavor == "woff2":
+			# uncompressed font data stream requires no padding between tables
+			self.nextTableOffset += entry.length
+		else:
+			self.nextTableOffset = self.nextTableOffset + ((entry.length + 3) & ~3)
+			# Add NUL bytes to pad the table data to a 4-byte boundary.
+			# Don't depend on f.seek() as we need to add the padding even if no
+			# subsequent write follows (seek is lazy), ie. after the final table
+			# in the font.
+			dst.write(b'\0' * (self.nextTableOffset - dst.tell()))
+			assert self.nextTableOffset == dst.tell()
 
-			if self.flavor in ("woff", "woff2"):
-				self.origNextTableOffset += (entry.origLength + 3) & ~3
+		if self.flavor in ("woff", "woff2"):
+			self.origNextTableOffset += (entry.origLength + 3) & ~3
 
 		self.tables[tag] = entry
 		self.tableOrder.append(tag)
