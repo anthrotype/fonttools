@@ -296,6 +296,7 @@ class SFNTWriter(object):
 				length += self.totalCompressedSize
 				length = (length + 3) & ~3
 
+			compressedMetaData = privData = b""
 			data = self.flavorData if self.flavorData else FlavorData()
 			if data.majorVersion is not None and data.minorVersion is not None:
 				self.majorVersion = data.majorVersion
@@ -314,9 +315,10 @@ class SFNTWriter(object):
 			else:
 				self.metaOffset = self.metaLength = self.metaOrigLength = 0
 			if data.privData:
+				privData = data.privData
 				length = (length + 3) & ~3
 				self.privOffset = length
-				self.privLength = len(data.privData)
+				self.privLength = len(privData)
 				length += self.privLength
 			else:
 				self.privOffset = self.privLength = 0
@@ -327,7 +329,7 @@ class SFNTWriter(object):
 			pass
 
 		directory = sstruct.pack(self.directoryFormat, self)
-		
+
 		self.file.seek(self.directorySize)
 		seenHead = 0
 		for tag, entry in tables:
@@ -341,25 +343,19 @@ class SFNTWriter(object):
 		if self.flavor == "woff2":
 			# finally write WOFF2 compressed font data to disk
 			self.file.write(compressedData)
-			offset = self.file.tell()
-			paddedOffset = (offset + 3) & ~3
-			self.file.write(b'\0' * (paddedOffset - offset))
+			write4BytePadding(self.file)
 		if self.flavor in ("woff", "woff2"):
-			# write WOFF/WOFF2 metadata and private data
-			if self.metaLength:
-				self.file.seek(0, 2)
-				offset = self.file.tell()
-				paddedOffset = (offset + 3) & ~3
-				self.file.write(b'\0' * (paddedOffset - offset))
+			if compressedMetaData:
+				self.file.seek(self.metaOffset)
 				assert self.file.tell() == self.metaOffset
 				self.file.write(compressedMetaData)
-			if self.privLength:
-				self.file.seek(0, 2)
-				offset = self.file.tell()
-				paddedOffset = (offset + 3) & ~3
-				self.file.write(b'\0' * (paddedOffset - offset))
+				if privData:
+					# insert padding after metadata if followed by private data
+					write4BytePadding(self.file)
+			if privData:
+				self.file.seek(self.privOffset)
 				assert self.file.tell() == self.privOffset
-				self.file.write(data.privData)
+				self.file.write(privData)
 
 	def _calcMasterChecksum(self, directory):
 		# calculate checkSumAdjustment
@@ -623,6 +619,13 @@ class WOFFFlavorData():
 				data = reader.file.read(reader.privLength)
 				assert len(data) == reader.privLength
 				self.privData = data
+
+def write4BytePadding(file):
+	"""Write NUL bytes at the end of file to pad data to a 4-byte boundary."""
+	file.seek(0, 2)
+	offset = file.tell()
+	paddedOffset = (offset + 3) & ~3
+	file.write(b'\0' * (paddedOffset - offset))
 
 def readUInt128(file):
 	""" A UIntBase128 encoded number is a sequence of bytes for which the most
