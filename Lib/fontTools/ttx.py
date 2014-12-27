@@ -178,7 +178,7 @@ def ttList(input, output, options):
 		from fontTools.ttLib.sfnt import calcChecksum
 		tags = reader.tableOrder
 		offset = 12 + 16 * len(tags)
-		for tag in reader.tableOrder:
+		for tag in tags:
 			entry = reader.tables[tag]
 			data = reader[tag]
 			if tag == 'head':
