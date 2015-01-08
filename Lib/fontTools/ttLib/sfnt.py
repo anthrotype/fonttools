@@ -311,7 +311,7 @@ class SFNTWriter(object):
 
 			# calculate offsets and lengths for any metadata and/or private data
 			compressedMetaData = privData = b""
-			data = self.flavorData if self.flavorData else FlavorData(flavor=self.flavor)
+			data = self.flavorData if self.flavorData else FlavorData()
 			if data.majorVersion is not None and data.minorVersion is not None:
 				self.majorVersion = data.majorVersion
 				self.minorVersion = data.minorVersion
@@ -324,7 +324,12 @@ class SFNTWriter(object):
 				self.metaOrigLength = len(data.metaData)
 				self.metaOffset = offset
 				# compress metadata using either zlib or brotli
-				compressedMetaData = data.encodeData(data.metaData)
+				if self.flavor == "woff":
+					import zlib
+					compressedMetaData = zlib.compress(data.metaData)
+				elif self.flavor == "woff2":
+					import brotli
+					compressedMetaData = brotli.compress(data.metaData)
 				self.metaLength = len(compressedMetaData)
 				offset += self.metaLength
 			else:
@@ -614,23 +619,7 @@ class WOFFDirectoryEntry(DirectoryEntry):
 
 class FlavorData(object):
 
-	_flavor = None
-
-	@property
-	def flavor(self):
-		return self._flavor
-
-	@flavor.setter
-	def flavor(self, value):
-		if value in ('woff', 'woff2'):
-			self._flavor = value
-		else:
-			from fontTools import ttLib
-			raise ttLib.TTLibError(
-				"Invalid flavor '%s'. Must be either 'woff' or 'woff2" % value)
-
-	def __init__(self, reader=None, flavor=None):
-		self.flavor = reader.flavor if reader else flavor
+	def __init__(self, reader=None):
 		self.majorVersion = None
 		self.minorVersion = None
 		self.metaData = None
@@ -642,7 +631,18 @@ class FlavorData(object):
 				reader.file.seek(reader.metaOffset)
 				rawData = reader.file.read(reader.metaLength)
 				assert len(rawData) == reader.metaLength
-				data = self.decodeData(rawData)
+				flavor = reader.flavor
+				# decompress metadata using either zlib or brotli
+				if flavor == "woff":
+					import zlib
+					data = zlib.decompress(rawData)
+				elif flavor == "woff2":
+					import brotli
+					data = brotli.decompress(rawData)
+				else:
+					from fontTools import ttLib
+					raise ttLib.TTLibError(
+						"Invalid flavor '%s'. Must be either 'woff' or 'woff2" % flavor)
 				assert len(data) == reader.metaOrigLength
 				self.metaData = data
 			if reader.privLength:
@@ -650,24 +650,6 @@ class FlavorData(object):
 				data = reader.file.read(reader.privLength)
 				assert len(data) == reader.privLength
 				self.privData = data
-
-	def decodeData(self, rawData):
-		if self.flavor == "woff":
-			import zlib
-			data = zlib.decompress(rawData)
-		elif self.flavor == "woff2":
-			import brotli
-			data = brotli.decompress(rawData)
-		return data
-
-	def encodeData(self, data):
-		if self.flavor == "woff":
-			import zlib
-			rawData = zlib.compress(data)
-		elif self.flavor == "woff2":
-			import brotli
-			rawData = brotli.compress(data)
-		return rawData
 
 def write4BytePadding(file):
 	"""Write NUL bytes at the end of file to pad data to a 4-byte boundary."""
