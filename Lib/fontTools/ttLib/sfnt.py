@@ -294,7 +294,7 @@ class SFNTWriter(object):
 				# start calculating total size of WOFF2 font
 				offset = woff2DirectorySize
 				for tag, entry in tables:
-					offset += tableEntrySize(entry)
+					offset += entry.size
 
 				# update head's checkSumAdjustment
 				self.writeMasterChecksum(b"")
@@ -682,10 +682,8 @@ def readBase128(file):
 	The number itself is base 128 encoded in the lower 7 bits of each byte.
 	"""
 	result = 0
-	length = 0
 	for i in range(5):
 		data = file.read(1)
-		length += 1
 		code, = struct.unpack(">B", data)
 		# if any of the top seven bits are set then we're about to overflow
 		if result & 0xFE000000:
@@ -695,8 +693,7 @@ def readBase128(file):
 		result = (result << 7) | (code & 0x7f)
 		# repeat until the most significant bit of byte is false
 		if (code & 0x80) == 0:
-			# return result plus number of bytes consumed
-			return result, length
+			return result
 	# make sure not to exceed the size bound
 	from fontTools import ttLib
 	raise ttLib.TTLibError('UIntBase128-encoded sequence is longer than 5 bytes')
@@ -748,22 +745,13 @@ def knownTableIndex(tag):
 			return i
 	return 63
 
-def tableEntrySize(table):
-	flagByte = knownTableIndex(table.tag)
-	size = 1 if (flagByte & 0x3f) != 0x3f else 5
-	size += sizeBase128(table.origLength)
-	if table.transform:
-		size += sizeBase128(table.length)
-	return size
-
 class WOFF2DirectoryEntry(DirectoryEntry):
+
 	def fromFile(self, file):
 		sstruct.unpack(woff2FlagsFormat, file.read(woff2FlagsSize), self)
-		self.size = woff2FlagsSize
 		if self.flags & 0x3F == 0x3F:
 			# if bits [0..5] of the flags byte == 63, read a 4-byte arbitrary tag value
 			sstruct.unpack(woff2UnknownTagFormat, file.read(woff2UnknownTagSize), self)
-			self.size += woff2UnknownTagSize
 		else:
 			# otherwise, tag is derived from a fixed 'Known Tags' table
 			self.tag = woff2KnownTags[self.flags & 0x3F]
@@ -772,8 +760,7 @@ class WOFF2DirectoryEntry(DirectoryEntry):
 			from fontTools import ttLib
 			raise ttLib.TTLibError('bits 6-7 are reserved and must be 0')
 		# UIntBase128 value specifying the table's length in an uncompressed font
-		self.origLength, nBytes = readBase128(file)
-		self.size += nBytes
+		self.origLength = readBase128(file)
 		self.transform = False
 		self.length = self.origLength
 		if self.tag not in ('glyf', 'loca'):
@@ -782,8 +769,7 @@ class WOFF2DirectoryEntry(DirectoryEntry):
 		self.transform = True
 		# Optional UIntBase128 specifying the length of the 'transformed' table.
 		# For simplicity, the 'transformLength' is called 'length' here.
-		self.length, nBytes = readBase128(file)
-		self.size += nBytes
+		self.length = readBase128(file)
 		# transformed loca is reconstructed as part of the glyf decoding process
 		# and its length must always be 0
 		if self.tag == 'loca' and self.length != 0:
@@ -791,6 +777,15 @@ class WOFF2DirectoryEntry(DirectoryEntry):
 			raise ttLib.TTLibError(
 				"incorrect size of transformed 'loca' table: expected 0, received %d bytes"
 				% (len(self.length)))
+
+	@property
+	def size(self):
+		flagByte = knownTableIndex(self.tag)
+		size = 1 if (flagByte & 0x3f) != 0x3f else 5
+		size += sizeBase128(self.origLength)
+		if self.transform:
+			size += sizeBase128(self.length)
+		return size
 
 	def fromString(self, str):
 		return self.fromFile(StringIO(str))
