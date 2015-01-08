@@ -676,7 +676,7 @@ def write4BytePadding(file):
 	paddedOffset = (offset + 3) & ~3
 	file.write(b'\0' * (paddedOffset - offset))
 
-def readUInt128(file):
+def readBase128(file):
 	""" A UIntBase128 encoded number is a sequence of bytes for which the most
 	significant bit is set for all but the last byte, and clear for the last byte.
 	The number itself is base 128 encoded in the lower 7 bits of each byte.
@@ -701,16 +701,16 @@ def readUInt128(file):
 	from fontTools import ttLib
 	raise ttLib.TTLibError('UIntBase128-encoded sequence is longer than 5 bytes')
 
-def UInt128Size(n):
+def sizeBase128(n):
 	size = 1
 	while n >= 128:
 		size += 1
 		n >>= 7
 	return size
 
-def packUInt128(n):
+def packBase128(n):
 	data = b''
-	size = UInt128Size(n)
+	size = sizeBase128(n)
 	for i in range(size):
 		b = (n >> (7 * (size - i - 1))) & 0x7f
 		if i < size - 1:
@@ -751,9 +751,9 @@ def knownTableIndex(tag):
 def tableEntrySize(table):
 	flagByte = knownTableIndex(table.tag)
 	size = 1 if (flagByte & 0x3f) != 0x3f else 5
-	size += UInt128Size(table.origLength)
+	size += sizeBase128(table.origLength)
 	if table.transform:
-		size += UInt128Size(table.length)
+		size += sizeBase128(table.length)
 	return size
 
 class WOFF2DirectoryEntry(DirectoryEntry):
@@ -772,7 +772,7 @@ class WOFF2DirectoryEntry(DirectoryEntry):
 			from fontTools import ttLib
 			raise ttLib.TTLibError('bits 6-7 are reserved and must be 0')
 		# UIntBase128 value specifying the table's length in an uncompressed font
-		self.origLength, nBytes = readUInt128(file)
+		self.origLength, nBytes = readBase128(file)
 		self.size += nBytes
 		self.transform = False
 		self.length = self.origLength
@@ -782,7 +782,7 @@ class WOFF2DirectoryEntry(DirectoryEntry):
 		self.transform = True
 		# Optional UIntBase128 specifying the length of the 'transformed' table.
 		# For simplicity, the 'transformLength' is called 'length' here.
-		self.length, nBytes = readUInt128(file)
+		self.length, nBytes = readBase128(file)
 		self.size += nBytes
 		# transformed loca is reconstructed as part of the glyf decoding process
 		# and its length must always be 0
@@ -799,9 +799,9 @@ class WOFF2DirectoryEntry(DirectoryEntry):
 		data = struct.pack('B', self.flags)
 		if (self.flags & 0x3f) == 0x3f:
 			data += struct.pack('>L', self.tag)
-		data += packUInt128(self.origLength)
+		data += packBase128(self.origLength)
 		if self.transform:
-			data += packUInt128(self.length)
+			data += packBase128(self.length)
 		return data
 
 	def loadData(self, reader):
