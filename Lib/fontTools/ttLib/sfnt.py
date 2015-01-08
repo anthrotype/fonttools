@@ -207,9 +207,13 @@ class SFNTWriter(object):
 			entry.origOffset = self.origNextTableOffset
 
 		if self.flavor == "woff2":
-			entry.flags = knownTableIndex(tag)
-			entry.transform = False
+			# check if tag is present in Known Tags table, otherwise set flags to 63
+			entry.flags = 63
+			for i in range(len(woff2KnownTags)):
+				if entry.tag == woff2KnownTags[i]:
+					entry.flags = i
 			# only glyf and loca tables needs to be transformed
+			entry.transform = False
 			if tag == 'glyf':
 				entry.transform = True
 			elif tag == 'loca':
@@ -720,12 +724,6 @@ def unpack255UShort(data):
 		result = code
 	# return result plus left over data
 	return result, data
-
-def knownTableIndex(tag):
-	for i in range(63):
-		if Tag(tag) == woff2KnownTags[i]:
-			return i
-	return 63
 
 class WOFF2DirectoryEntry(DirectoryEntry):
 
