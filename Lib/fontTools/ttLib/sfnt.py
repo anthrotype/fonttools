@@ -104,7 +104,7 @@ class SFNTReader(object):
 
 		# Load flavor data if any
 		if self.flavor is not None:
-			self.flavorData = FlavorData(self)
+			self.flavorData = WOFFFlavorData(self)
 
 	def has_key(self, tag):
 		return tag in self.tables
@@ -311,7 +311,7 @@ class SFNTWriter(object):
 
 			# calculate offsets and lengths for any metadata and/or private data
 			compressedMetaData = privData = b""
-			data = self.flavorData if self.flavorData else FlavorData()
+			data = self.flavorData if self.flavorData else WOFFFlavorData()
 			if data.majorVersion is not None and data.minorVersion is not None:
 				self.majorVersion = data.majorVersion
 				self.minorVersion = data.minorVersion
@@ -617,7 +617,7 @@ class WOFFDirectoryEntry(DirectoryEntry):
 			self.length = len(rawData)
 		return rawData
 
-class FlavorData(object):
+class WOFFFlavorData(object):
 
 	def __init__(self, reader=None):
 		self.majorVersion = None
