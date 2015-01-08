@@ -684,7 +684,7 @@ def readBase128(file):
 	from fontTools import ttLib
 	raise ttLib.TTLibError('UIntBase128-encoded sequence is longer than 5 bytes')
 
-def sizeBase128(n):
+def base128Size(n):
 	size = 1
 	while n >= 128:
 		size += 1
@@ -693,7 +693,7 @@ def sizeBase128(n):
 
 def packBase128(n):
 	data = b''
-	size = sizeBase128(n)
+	size = base128Size(n)
 	for i in range(size):
 		b = (n >> (7 * (size - i - 1))) & 0x7f
 		if i < size - 1:
