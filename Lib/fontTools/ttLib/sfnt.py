@@ -87,7 +87,7 @@ class SFNTReader(object):
 			# to take the sum of all the directory entries...
 			compressedDataOffset = woff2DirectorySize
 			for entry in self.tables.values():
-				compressedDataOffset += len(entry)
+				compressedDataOffset += len(entry.toString())
 			# WOFF2 font data is compressed in a single stream comprising all the
 			# tables. So it is loaded once and decompressed as a whole, and then
 			# stored inside a file-like '_fontBuffer' attribute of reader
@@ -294,7 +294,7 @@ class SFNTWriter(object):
 				# start calculating total size of WOFF2 font
 				offset = woff2DirectorySize
 				for tag, entry in tables:
-					offset += len(entry)
+					offset += len(entry.toString())
 
 				# update head's checkSumAdjustment
 				self.writeMasterChecksum(b"")
@@ -777,14 +777,6 @@ class WOFF2DirectoryEntry(DirectoryEntry):
 			raise ttLib.TTLibError(
 				"incorrect size of transformed 'loca' table: expected 0, received %d bytes"
 				% (len(self.length)))
-
-	def __len__(self):
-		flagByte = knownTableIndex(self.tag)
-		size = 1 if (flagByte & 0x3f) != 0x3f else 5
-		size += sizeBase128(self.origLength)
-		if self.transform:
-			size += sizeBase128(self.length)
-		return size
 
 	def fromString(self, str):
 		return self.fromFile(StringIO(str))
