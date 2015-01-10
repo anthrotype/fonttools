@@ -65,7 +65,7 @@ class table__g_l_y_f(DefaultTable.DefaultTable):
 		locations = []
 		currentLocation = 0
 		dataList = []
-		recalcBBoxes = ttFont.recalcBBoxes
+		recalcBBoxes = True if ttFont.flavor == "woff2" else ttFont.recalcBBoxes
 		for glyphName in self.glyphOrder:
 			glyph = self.glyphs[glyphName]
 			glyphData = glyph.compile(self, recalcBBoxes)
@@ -73,6 +73,12 @@ class table__g_l_y_f(DefaultTable.DefaultTable):
 			currentLocation = currentLocation + len(glyphData)
 			dataList.append(glyphData)
 		locations.append(currentLocation)
+
+		if ttFont.flavor == "woff2":
+			# pad glyph data to 4-byte boundary
+			glyphSize = len(glyphData)
+			paddedGlyphSize = (glyphSize + 3) & ~3
+			glyphData += b'\0' * (paddedGlyphSize - glyphSize)
 
 		if currentLocation < 0x20000:
 			# See if we can pad any odd-lengthed glyphs to allow loca
