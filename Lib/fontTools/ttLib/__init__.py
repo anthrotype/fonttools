@@ -201,9 +201,13 @@ class TTFont(object):
 		tags = list(self.keys())
 		if "GlyphOrder" in tags:
 			tags.remove("GlyphOrder")
-		if self.flavor == "woff2" and "DSIG" in tags:
-			# WOFF2 encoding can invalidate the 'DSIG' table, hence it must be removed
-			tags.remove("DSIG")
+		if self.flavor == "woff2":
+			if "DSIG" in tags:
+				# WOFF2 encoding can invalidate the 'DSIG' table, hence it must be removed
+				tags.remove("DSIG")
+			# normalise bounding boxes when compiling WOFF2 glyf table, so that simple glyph
+			# bbox data can be recalculated on decompile, instead of being stored in bboxStream
+			self.recalcBBoxes = True
 		numTables = len(tags)
 		if reorderTables:
 			import tempfile
