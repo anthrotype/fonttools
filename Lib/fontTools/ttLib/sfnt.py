@@ -90,7 +90,7 @@ class SFNTReader(object):
 				compressedDataOffset += len(entry.toString())
 			# WOFF2 font data is compressed in a single stream comprising all the
 			# tables. So it is loaded once and decompressed as a whole, and then
-			# stored inside a file-like '_fontBuffer' attribute of reader
+			# stored inside a file-like 'fontBuffer' attribute of reader
 			self.file.seek(compressedDataOffset)
 			compressedData = self.file.read(self.totalCompressedSize)
 			import brotli
@@ -100,7 +100,7 @@ class SFNTReader(object):
 				raise ttLib.TTLibError(
 					'unexpected size for uncompressed font data: expected %d, found %d'
 					% (uncompressedSize, len(decompressedData)))
-			self._fontBuffer = StringIO(decompressedData)
+			self.fontBuffer = StringIO(decompressedData)
 
 		# Load flavor data if any
 		if self.flavor is not None:
@@ -175,7 +175,7 @@ class SFNTWriter(object):
 			self.origNextTableOffset = sfntDirectorySize + numTables * sfntDirectoryEntrySize
 		if self.flavor == "woff2":
 			# make temporary buffer for storing raw table data before compressing
-			self._fontBuffer = StringIO()
+			self.fontBuffer = StringIO()
 			self.nextTableOffset = 0
 		else:
 			self.nextTableOffset = self.directorySize + numTables * self.DirectoryEntry.formatSize
@@ -290,7 +290,7 @@ class SFNTWriter(object):
 			else:
 				self.signature = b"wOF2"
 
-				# for each table, encode and save the data to _fontBuffer
+				# for each table, encode and save the data to fontBuffer
 				for tag, entry in tables:
 					data = entry.data
 					entry.saveData(self, data)
@@ -304,8 +304,8 @@ class SFNTWriter(object):
 				self.writeMasterChecksum(b"")
 
 				# compress font data
-				self._fontBuffer.seek(0)
-				uncompressedData = self._fontBuffer.read()
+				self.fontBuffer.seek(0)
+				uncompressedData = self.fontBuffer.read()
 				import brotli
 				compressedData = brotli.compress(uncompressedData, brotli.MODE_FONT)
 				self.totalCompressedSize = len(compressedData)
@@ -414,7 +414,7 @@ class SFNTWriter(object):
 		return checksumadjustment
 
 	def writeMasterChecksum(self, directory):
-		dst = self._fontBuffer if self.flavor == "woff2" else self.file
+		dst = self.fontBuffer if self.flavor == "woff2" else self.file
 		checksumadjustment = self._calcMasterChecksum(directory)
 		# write the checksum to the file
 		dst.seek(self.tables['head'].offset + 8)
@@ -780,8 +780,8 @@ class WOFF2DirectoryEntry(DirectoryEntry):
 		return data
 
 	def loadData(self, reader):
-		reader._fontBuffer.seek(self.offset)
-		rawData = reader._fontBuffer.read(self.length)
+		reader.fontBuffer.seek(self.offset)
+		rawData = reader.fontBuffer.read(self.length)
 		assert len(rawData) == self.length
 		data = self.decodeData(rawData, reader)
 		return data
@@ -790,8 +790,8 @@ class WOFF2DirectoryEntry(DirectoryEntry):
 		data = self.encodeData(data, writer)
 		self.length = len(data)
 		self.offset = writer.nextTableOffset
-		writer._fontBuffer.seek(self.offset)
-		writer._fontBuffer.write(data)
+		writer.fontBuffer.seek(self.offset)
+		writer.fontBuffer.write(data)
 		writer.nextTableOffset += self.length
 
 	def decodeData(self, rawData, reader):
