@@ -90,7 +90,7 @@ class SFNTReader(object):
 				compressedDataOffset += len(entry.toString())
 			# WOFF2 font data is compressed in a single stream comprising all the
 			# tables. So it is loaded once and decompressed as a whole, and then
-			# stored inside a file-like '_fontBuffer' attribute of reader
+			# stored inside a file-like 'fontBuffer' attribute of reader
 			self.file.seek(compressedDataOffset)
 			compressedData = self.file.read(self.totalCompressedSize)
 			import brotli
@@ -100,7 +100,8 @@ class SFNTReader(object):
 				raise ttLib.TTLibError(
 					'unexpected size for uncompressed font data: expected %d, found %d'
 					% (uncompressedSize, len(decompressedData)))
-			self._fontBuffer = StringIO(decompressedData)
+			self.fontBuffer = StringIO(decompressedData)
+			self.transformer = WOFF2Transformer(self)
 
 		# Load flavor data if any
 		if self.flavor is not None:
@@ -116,9 +117,18 @@ class SFNTReader(object):
 	
 	def __getitem__(self, tag):
 		"""Fetch the raw table data."""
+		src = self.fontBuffer if self.flavor == "woff2" else self.file
 		entry = self.tables[Tag(tag)]
-		data = entry.loadData(self if self.flavor == "woff2" else self.file)
-		# exclude WOFF2 from checking as it doesn't store original table checkSums
+		if entry.transform:
+			data = self.transformer.reconstruct(tag)
+			if len(data) != entry.origLength:
+				from fontTools import ttLib
+				raise ttLib.TTLibError(
+					"reconstructed '%s' doesn't match original size: expected %d, found %d"
+					% (tag, entry.origLength, len(data)))
+		else:
+			data = entry.loadData(src)
+		# ignore WOFF2 as it doesn't store original table checkSums
 		if self.checkChecksums and self.flavor != 'woff2':
 			if tag == 'head':
 				# Beh: we have to special-case the 'head' table.
@@ -175,7 +185,7 @@ class SFNTWriter(object):
 			self.origNextTableOffset = sfntDirectorySize + numTables * sfntDirectoryEntrySize
 		if self.flavor == "woff2":
 			# make temporary buffer for storing raw table data before compressing
-			self._fontBuffer = StringIO()
+			self.fontBuffer = StringIO()
 			self.nextTableOffset = 0
 		else:
 			self.nextTableOffset = self.directorySize + numTables * self.DirectoryEntry.formatSize
@@ -290,11 +300,12 @@ class SFNTWriter(object):
 			else:
 				self.signature = b"wOF2"
 
-				# for each table, encode and save the data to _fontBuffer
+				# for each table, encode and save the data to fontBuffer
 				for tag, entry in tables:
 					data = entry.data
-					entry.saveData(self, data)
-
+					entry.offset = self.nextTableOffset
+					entry.saveData(self.fontBuffer, data)
+					self.nextTableOffset += entry.length
 				# start calculating total size of WOFF2 font
 				offset = woff2DirectorySize
 				for tag, entry in tables:
@@ -304,8 +315,8 @@ class SFNTWriter(object):
 				self.writeMasterChecksum(b"")
 
 				# compress font data
-				self._fontBuffer.seek(0)
-				uncompressedData = self._fontBuffer.read()
+				self.fontBuffer.seek(0)
+				uncompressedData = self.fontBuffer.read()
 				import brotli
 				compressedData = brotli.compress(uncompressedData, brotli.MODE_FONT)
 				self.totalCompressedSize = len(compressedData)
@@ -414,7 +425,7 @@ class SFNTWriter(object):
 		return checksumadjustment
 
 	def writeMasterChecksum(self, directory):
-		dst = self._fontBuffer if self.flavor == "woff2" else self.file
+		dst = self.fontBuffer if self.flavor == "woff2" else self.file
 		checksumadjustment = self._calcMasterChecksum(directory)
 		# write the checksum to the file
 		dst.seek(self.tables['head'].offset + 8)
@@ -549,6 +560,7 @@ class DirectoryEntry(object):
 	
 	def __init__(self):
 		self.uncompressed = False # if True, always embed entry raw
+		self.transform = False # if True, table data is subject to transformation
 
 	def fromFile(self, file):
 		sstruct.unpack(self.format, file.read(self.formatSize), self)
@@ -654,6 +666,70 @@ class WOFFFlavorData(object):
 				data = reader.file.read(reader.privLength)
 				assert len(data) == reader.privLength
 				self.privData = data
+
+class Transformer(object):
+
+	def __init__(self, reader=None):
+		self.reader = reader
+		self.tables = {}
+
+class WOFF2Transformer(Transformer):
+
+	def reconstruct(self, tag):
+		assert self.reader != None
+		reader = self.reader
+
+		if tag not in ('glyf', 'loca'):
+			from fontTools import ttLib
+			raise ttLib.TTLibError("can't reconstruct '%s' table" % tag)
+
+		if tag in self.tables and hasattr(self.tables[tag], 'data'):
+			# table already reconstructed, return compiled data
+			return self.tables[tag].data
+
+		if tag == 'loca':
+			# there's no loca data in WOFF2, it must be recalculated from glyf
+			if 'glyf' not in self.tables:
+				# make sure glyf is reconstructed first
+				self.reconstruct('glyf')
+			glyfTable = self.tables['glyf']
+			# compile loca from reconstructed glyf
+			self.tables[tag] = table = WOFF2Loca()
+			table.data = data = table.reconstruct(glyfTable)
+		elif tag == 'glyf':
+			# reconstruct transformed glyf table
+			self.tables[tag] = table = WOFF2Glyf()
+			glyfEntry = reader.tables['glyf']
+			transformedGlyfData = glyfEntry.loadData(reader.fontBuffer)
+			table.data = data = table.reconstruct(transformedGlyfData)
+		return data
+
+	def transform(self, data, writer):
+		""" Return transformed 'glyf' and 'loca' tables' data, or return raw data
+		if the table was not transformed.
+		"""
+		if not self.transform:
+			return data
+
+		if self.tag == 'loca':
+			# transformed loca data is null
+			return b""
+
+		if self.tag != 'glyf':
+			from fontTools import ttLib
+			raise ttLib.TTLibError("can't transform '%s' table" % self.tag)
+
+		if 'loca' not in writer.tables:
+			from fontTools import ttLib
+			raise ttLib.TTLibError("loca must be encoded before glyf")
+
+		loca = WOFF2Loca(writer.indexFormat)
+		loca.decompile(writer.tables['loca'].data)
+		writer.glyfTable = table = WOFF2Glyf()
+		table.decompile(data, loca)
+
+		print(table.__dict__)
+		raise Exception('stop')
 
 def write4BytePadding(file):
 	"""Write NUL bytes at the end of file to pad data to a 4-byte boundary."""
@@ -778,85 +854,6 @@ class WOFF2DirectoryEntry(DirectoryEntry):
 		if self.transform:
 			data += packBase128(self.length)
 		return data
-
-	def loadData(self, reader):
-		reader._fontBuffer.seek(self.offset)
-		rawData = reader._fontBuffer.read(self.length)
-		assert len(rawData) == self.length
-		data = self.decodeData(rawData, reader)
-		return data
-
-	def saveData(self, writer, data):
-		data = self.encodeData(data, writer)
-		self.length = len(data)
-		self.offset = writer.nextTableOffset
-		writer._fontBuffer.seek(self.offset)
-		writer._fontBuffer.write(data)
-		writer.nextTableOffset += self.length
-
-	def decodeData(self, rawData, reader):
-		""" Return reconstructed 'glyf' and 'loca' tables. Return raw data
-		if the table was not transformed.
-		"""
-		if not self.transform:
-			return rawData
-
-		if self.tag == 'loca':
-			# there's no loca data in WOFF2, it must be recalculated from glyf
-			if not hasattr(reader, 'glyfTable'):
-				# make sure glyf is loaded first
-				glyfEntry = reader.tables['glyf']
-				glyfEntry.loadData(reader)
-			# compile loca from reconstructed glyf
-			table = WOFF2Loca()
-			data = table.reconstruct(reader.glyfTable)
-			return data
-
-		if self.tag != 'glyf':
-			from fontTools import ttLib
-			raise ttLib.TTLibError("can't decode transformed '%s' table" % self.tag)
-
-		if hasattr(reader, 'glyfTable'):
-			# glyf already decoded, return compiled data
-			return reader.glyfTable.compile()
-
-		# reconstruct transformed glyf table and store it inside reader
-		reader.glyfTable = table = WOFF2Glyf()
-		data = table.reconstruct(rawData)
-
-		if len(data) != self.origLength:
-			from fontTools import ttLib
-			raise ttLib.TTLibError(
-				"reconstructed 'glyf' doesn't match original size: expected %d, found %d"
-				% (self.origLength, len(data)))
-		return data
-
-	def encodeData(self, data, writer):
-		""" Return transformed 'glyf' and 'loca' tables' data, or return raw data
-		if the table was not transformed.
-		"""
-		if not self.transform:
-			return data
-
-		if self.tag == 'loca':
-			# transformed loca data is null
-			return b""
-
-		if self.tag != 'glyf':
-			from fontTools import ttLib
-			raise ttLib.TTLibError("can't transform '%s' table" % self.tag)
-
-		if 'loca' not in writer.tables:
-			from fontTools import ttLib
-			raise ttLib.TTLibError("loca must be encoded before glyf")
-
-		loca = WOFF2Loca(writer.indexFormat)
-		loca.decompile(writer.tables['loca'].data)
-		writer.glyfTable = table = WOFF2Glyf()
-		table.decompile(data, loca)
-
-		print(table.__dict__)
-		raise Exception('stop')
 
 class WOFF2Loca(getTableClass('loca')):
 
