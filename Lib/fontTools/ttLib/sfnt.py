@@ -55,6 +55,7 @@ class SFNTReader(object):
 			self.DirectoryEntry = WOFF2DirectoryEntry
 			sstruct.unpack(woff2DirectoryFormat, self.file.read(woff2DirectorySize), self) 
 			self.transformer = WOFF2Transformer(self)
+			self.fontBuffer = None
 		else:
 			sstruct.unpack(sfntDirectoryFormat, self.file.read(sfntDirectorySize), self)
 		self.sfntVersion = Tag(self.sfntVersion)
@@ -89,29 +90,14 @@ class SFNTReader(object):
 	
 	def __getitem__(self, tag):
 		"""Fetch the raw table data."""
-		infile = self.file
 		if self.flavor == "woff2":
-			# WOFF2 font data is compressed in a single stream comprising all the
-			# tables. So it is loaded once and decompressed as a whole
-			if not hasattr(self, 'fontBuffer'):
-				uncompressedSize = 0  # size of the original uncompressed font data
-				compressedDataOffset = woff2DirectorySize  # offset to the compressed font data
-				for entry in self.tables.values():
-					uncompressedSize += entry.lengt
-					compressedDataOffset += len(entry.toString())
-				# decompress font data using brotli
-				self.file.seek(compressedDataOffset)
-				compressedData = self.file.read(self.totalCompressedSize)
-				import brotli
-				decompressedData = brotli.decompress(compressedData)
-				if len(decompressedData) != uncompressedSize:
-					from fontTools import ttLib
-					raise ttLib.TTLibError(
-						'unexpected size for uncompressed font data: expected %d, found %d'
-						% (uncompressedSize, len(decompressedData)))
-				# store decompressed data in a file-like 'fontBuffer' attribute of reader
-				self.fontBuffer = StringIO(decompressedData)
+			if not self.fontBuffer:
+				# WOFF2 font data is compressed in a single stream comprising all tables,
+				# so it's decompressed as a whole and then stored in file-like buffer
+				self.fontBuffer = self._decompressWoff2()
 			infile = self.fontBuffer
+		else:
+			infile = self.file
 		entry = self.tables[Tag(tag)]
 		if entry.transform:
 			data = self.transformer.reconstruct(tag)
@@ -142,6 +128,26 @@ class SFNTReader(object):
 	
 	def close(self):
 		self.file.close()
+
+	def _decompressWoff2(self):
+		"""Decompress WOFF2 font data using brotli."""
+		import brotli
+		# calculate size of uncompressed font data and offset to compressed font data
+		uncompressedSize = 0
+		compressedDataOffset = woff2DirectorySize
+		for entry in self.tables.values():
+			uncompressedSize += entry.length
+			compressedDataOffset += len(entry.toString())
+		self.file.seek(compressedDataOffset)
+		compressedData = self.file.read(self.totalCompressedSize)
+		decompressedData = brotli.decompress(compressedData)
+		if len(decompressedData) != uncompressedSize:
+			from fontTools import ttLib
+			raise ttLib.TTLibError(
+				'unexpected size for uncompressed font data: expected %d, found %d'
+				% (uncompressedSize, len(decompressedData)))
+		# return decompressed data as file-like string buffer
+		return StringIO(decompressedData)
 
 
 class SFNTWriter(object):
