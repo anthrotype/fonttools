@@ -53,7 +53,8 @@ class SFNTReader(object):
 		elif self.sfntVersion == b"wOF2":
 			self.flavor = "woff2"
 			self.DirectoryEntry = WOFF2DirectoryEntry
-			sstruct.unpack(woff2DirectoryFormat, self.file.read(woff2DirectorySize), self)
+			sstruct.unpack(woff2DirectoryFormat, self.file.read(woff2DirectorySize), self) 
+			self.transformer = WOFF2Transformer(self)
 		else:
 			sstruct.unpack(sfntDirectoryFormat, self.file.read(sfntDirectorySize), self)
 		self.sfntVersion = Tag(self.sfntVersion)
@@ -62,46 +63,17 @@ class SFNTReader(object):
 			from fontTools import ttLib
 			raise ttLib.TTLibError("Not a TrueType or OpenType font (bad sfntVersion)")
 		self.tables = {}
-		self.tableOrder = []
 		offset = 0
 		for i in range(self.numTables):
 			entry = self.DirectoryEntry()
 			entry.fromFile(self.file)
 			tag = Tag(entry.tag)
 			self.tables[tag] = entry
-			self.tableOrder.append(tag)
-			# WOFF2 doesn't store offsets to individual tables; to access random table
-			# data, one must reconstruct the offsets from the tables' lengths.
+			# calculate offsets to individual WOFF2 tables from beginning of decompressed
+			# font buffer to allow random access of table data
 			if self.flavor == 'woff2':
 				entry.offset = offset
 				offset += entry.length
-
-		if self.flavor == 'woff2':
-			# the total sum of the 'origLength' for non-transformed tables and
-			# 'transformLength' for transformed tables is used to verify that the
-			# decompressed data has the same size as the original uncompressed data.
-			uncompressedSize = offset
-			# there's no explicit offset to the compressed font data: this follows
-			# immediately after the last directory entry; however, the length of
-			# WOFF2 directory entries varies depending on their content. So, we need
-			# to take the sum of all the directory entries...
-			compressedDataOffset = woff2DirectorySize
-			for entry in self.tables.values():
-				compressedDataOffset += len(entry.toString())
-			# WOFF2 font data is compressed in a single stream comprising all the
-			# tables. So it is loaded once and decompressed as a whole, and then
-			# stored inside a file-like 'fontBuffer' attribute of reader
-			self.file.seek(compressedDataOffset)
-			compressedData = self.file.read(self.totalCompressedSize)
-			import brotli
-			decompressedData = brotli.decompress(compressedData)
-			if len(decompressedData) != uncompressedSize:
-				from fontTools import ttLib
-				raise ttLib.TTLibError(
-					'unexpected size for uncompressed font data: expected %d, found %d'
-					% (uncompressedSize, len(decompressedData)))
-			self.fontBuffer = StringIO(decompressedData)
-			self.transformer = WOFF2Transformer(self)
 
 		# Load flavor data if any
 		if self.flavor is not None:
@@ -117,7 +89,29 @@ class SFNTReader(object):
 	
 	def __getitem__(self, tag):
 		"""Fetch the raw table data."""
-		src = self.fontBuffer if self.flavor == "woff2" else self.file
+		infile = self.file
+		if self.flavor == "woff2":
+			# WOFF2 font data is compressed in a single stream comprising all the
+			# tables. So it is loaded once and decompressed as a whole
+			if not hasattr(self, 'fontBuffer'):
+				uncompressedSize = 0  # size of the original uncompressed font data
+				compressedDataOffset = woff2DirectorySize  # offset to the compressed font data
+				for entry in self.tables.values():
+					uncompressedSize += entry.lengt
+					compressedDataOffset += len(entry.toString())
+				# decompress font data using brotli
+				self.file.seek(compressedDataOffset)
+				compressedData = self.file.read(self.totalCompressedSize)
+				import brotli
+				decompressedData = brotli.decompress(compressedData)
+				if len(decompressedData) != uncompressedSize:
+					from fontTools import ttLib
+					raise ttLib.TTLibError(
+						'unexpected size for uncompressed font data: expected %d, found %d'
+						% (uncompressedSize, len(decompressedData)))
+				# store decompressed data in a file-like 'fontBuffer' attribute of reader
+				self.fontBuffer = StringIO(decompressedData)
+			infile = self.fontBuffer
 		entry = self.tables[Tag(tag)]
 		if entry.transform:
 			data = self.transformer.reconstruct(tag)
@@ -127,7 +121,7 @@ class SFNTReader(object):
 					"reconstructed '%s' doesn't match original size: expected %d, found %d"
 					% (tag, entry.origLength, len(data)))
 		else:
-			data = entry.loadData(src)
+			data = entry.loadData(infile)
 		# ignore WOFF2 as it doesn't store original table checkSums
 		if self.checkChecksums and self.flavor != 'woff2':
 			if tag == 'head':
