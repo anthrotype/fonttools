@@ -62,14 +62,12 @@ class SFNTReader(object):
 			from fontTools import ttLib
 			raise ttLib.TTLibError("Not a TrueType or OpenType font (bad sfntVersion)")
 		self.tables = {}
-		self.tableOrder = []
 		offset = 0
 		for i in range(self.numTables):
 			entry = self.DirectoryEntry()
 			entry.fromFile(self.file)
 			tag = Tag(entry.tag)
 			self.tables[tag] = entry
-			self.tableOrder.append(tag)
 			# WOFF2 doesn't store offsets to individual tables; to access random table
 			# data, one must reconstruct the offsets from the tables' lengths.
 			if self.flavor == 'woff2':
