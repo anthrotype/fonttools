@@ -54,6 +54,8 @@ class SFNTReader(object):
 			self.flavor = "woff2"
 			self.DirectoryEntry = WOFF2DirectoryEntry
 			sstruct.unpack(woff2DirectoryFormat, self.file.read(woff2DirectorySize), self)
+			# temp string buffer storing decompressed font data to be loaded or trasformed
+			self.fontBuffer = None
 		else:
 			sstruct.unpack(sfntDirectoryFormat, self.file.read(sfntDirectorySize), self)
 		self.sfntVersion = Tag(self.sfntVersion)
@@ -73,32 +75,6 @@ class SFNTReader(object):
 			if self.flavor == 'woff2':
 				entry.offset = offset
 				offset += entry.length
-
-		if self.flavor == 'woff2':
-			# the total sum of the 'origLength' for non-transformed tables and
-			# 'transformLength' for transformed tables is used to verify that the
-			# decompressed data has the same size as the original uncompressed data.
-			uncompressedSize = offset
-			# there's no explicit offset to the compressed font data: this follows
-			# immediately after the last directory entry; however, the length of
-			# WOFF2 directory entries varies depending on their content. So, we need
-			# to take the sum of all the directory entries...
-			compressedDataOffset = woff2DirectorySize
-			for entry in self.tables.values():
-				compressedDataOffset += len(entry.toString())
-			# WOFF2 font data is compressed in a single stream comprising all the
-			# tables. So it is loaded once and decompressed as a whole, and then
-			# stored inside a file-like 'fontBuffer' attribute of reader
-			self.file.seek(compressedDataOffset)
-			compressedData = self.file.read(self.totalCompressedSize)
-			import brotli
-			decompressedData = brotli.decompress(compressedData)
-			if len(decompressedData) != uncompressedSize:
-				from fontTools import ttLib
-				raise ttLib.TTLibError(
-					'unexpected size for uncompressed font data: expected %d, found %d'
-					% (uncompressedSize, len(decompressedData)))
-			self.fontBuffer = StringIO(decompressedData)
 
 		# Load flavor data if any
 		if self.flavor is not None:
@@ -778,6 +754,24 @@ class WOFF2DirectoryEntry(DirectoryEntry):
 		return data
 
 	def loadData(self, reader):
+		if reader.fontBuffer is None:
+			# WOFF2 font data is compressed in a single stream comprising all tables,
+			# so it's decompressed as a whole and then stored in a file-like buffer
+			uncompressedSize = 0  # size of uncompressed font data
+			compressedDataOffset = woff2DirectorySize  # offset to compressed font data
+			for entry in reader.tables.values():
+				uncompressedSize += entry.length
+				compressedDataOffset += len(entry.toString())
+			reader.file.seek(compressedDataOffset)
+			compressedData = reader.file.read(reader.totalCompressedSize)
+			import brotli
+			decompressedData = brotli.decompress(compressedData)
+			if len(decompressedData) != uncompressedSize:
+				from fontTools import ttLib
+				raise ttLib.TTLibError(
+					'unexpected size for uncompressed font data: expected %d, found %d'
+					% (uncompressedSize, len(decompressedData)))
+			reader.fontBuffer = StringIO(decompressedData)
 		reader.fontBuffer.seek(self.offset)
 		rawData = reader.fontBuffer.read(self.length)
 		assert len(rawData) == self.length
@@ -1175,7 +1169,6 @@ class WOFF2Glyph(getTableModule('glyf').Glyph):
 
 		self.flags = array.array("B", onCurves)
 		self.coordinates = coordinates
-
 
 def calcChecksum(data):
 	"""Calculate the checksum for an arbitrary block of data.
