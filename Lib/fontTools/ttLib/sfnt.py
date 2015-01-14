@@ -503,6 +503,9 @@ woff2UnknownTagFormat = """\
 
 woff2UnknownTagSize = sstruct.calcsize(woff2UnknownTagFormat)
 
+woff2Base128MaxSize = 5
+woff2DirectoryEntryMaxSize = woff2FlagsSize + woff2UnknownTagSize + 2 * woff2Base128MaxSize
+
 woff2GlyfTableFormat = """
 		> # big endian
 		version:                  L  # = 0x00000000
@@ -707,7 +710,7 @@ class WOFF2DirectoryEntry(DirectoryEntry):
 
 	def fromFile(self, file):
 		pos = file.tell()
-		data = file.read()
+		data = file.read(woff2DirectoryEntryMaxSize)
 		left = self.fromString(data)
 		consumed = len(data) - len(left)
 		file.seek(pos + consumed)
