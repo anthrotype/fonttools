@@ -54,7 +54,7 @@ class SFNTReader(object):
 			self.flavor = "woff2"
 			self.DirectoryEntry = WOFF2DirectoryEntry
 			sstruct.unpack(woff2DirectoryFormat, self.file.read(woff2DirectorySize), self)
-			# temp string buffer storing decompressed font data to be loaded or trasformed
+			# string buffer storing decompressed font data to be loaded or trasformed
 			self.fontBuffer = None
 		else:
 			sstruct.unpack(sfntDirectoryFormat, self.file.read(sfntDirectorySize), self)
@@ -70,8 +70,8 @@ class SFNTReader(object):
 			entry.fromFile(self.file)
 			tag = Tag(entry.tag)
 			self.tables[tag] = entry
-			# WOFF2 doesn't store offsets to individual tables; to access random table
-			# data, one must reconstruct the offsets from the tables' lengths.
+			# WOFF2 doesn't store offsets to individual tables; to access table data
+			# randomly, we must reconstruct the offsets from the tables' lengths
 			if self.flavor == 'woff2':
 				entry.offset = offset
 				offset += entry.length
