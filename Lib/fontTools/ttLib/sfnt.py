@@ -61,7 +61,7 @@ class SFNTReader(object):
 			entry.fromFile(self.file)
 			self.tables[Tag(entry.tag)] = entry
 			if self.flavor == "woff2":
-				# WOFF2 doesn't store offsets to individual tables. These can be 
+				# WOFF2 doesn't store offsets to individual tables. These must be 
 				# calculated by summing up the tables' lengths (there's no padding)
 				entry.offset = offset
 				offset += entry.length
