@@ -82,7 +82,6 @@ class WOFF2Reader(SFNTReader):
 				# make sure glyf is loaded first
 				self['glyf']
 			table = self.tempFont['loca']
-
 		entry.data = data = table.compile(self.tempFont)
 
 		currLength = len(data)
@@ -291,11 +290,6 @@ class WOFF2Loca(getTableClass('loca')):
 		self.tableTag = Tag('loca')
 		self.indexFormat = indexFormat
 
-	def reconstruct(self, glyfTable):
-		self.indexFormat = glyfTable.indexFormat
-		self.locations = glyfTable.locations
-		return self.compile()
-
 	def transform(self):
 		return b""
 
@@ -315,18 +309,6 @@ class WOFF2Loca(getTableClass('loca')):
 				l.append(locations[i] * 2)
 			locations = l
 		self.locations = locations
-
-	def _compile(self):
-		longFormat = self.indexFormat
-		locations = self.locations
-		if longFormat:
-			locations = array.array("I", locations)
-		else:
-			# for the 'short' loca, divide the actual offsets by 2
-			locations = array.array("H", [value >> 1 for value in locations])
-		if sys.byteorder != "big":
-			locations.byteswap()
-		return locations.tostring()
 
 class WOFF2Glyf(getTableClass('glyf')):
 
@@ -423,46 +405,6 @@ class WOFF2Glyf(getTableClass('glyf')):
 		if lazy is False:
 			for glyph in self.glyphs.values():
 				glyph.expand(self)
-
-	def _compileGlyphData(self, recalcBBoxes=False, compact=True):
-		""" Return a list of compiled glyph data, padded to 4-byte boundaries.
-		"""
-		longFormat = self.indexFormat
-		dataList = []
-		currentLocation = 0
-		for glyphName in self.glyphOrder:
-			glyph = self.glyphs[glyphName]
-			if compact and not hasattr(glyph, 'data'):
-				# store glyph data in 'compact' form
-				glyph.compact(self, recalcBBoxes)
-			glyphData = glyph.compile(self, recalcBBoxes)
-			# pad glyph data to 4-byte boundary
-			glyphSize = len(glyphData)
-			paddedGlyphSize = (glyphSize + 3) & ~3
-			glyphData += b'\0' * (paddedGlyphSize - glyphSize)
-			if not longFormat:
-				# make sure the data fits the 'short' version
-				if currentLocation + len(glyphData) > 0x1FFFF:
-					raise TTLibError(
-						"glyph offset exceeds the limits of 'short' loca format: 0x%05X"
-						% (currentLocation + len(glyphData)))
-			dataList.append(glyphData)
-			currentLocation += len(glyphData)
-		return dataList
-
-	def _compile(self, recalcBBoxes=False, compact=True):
-		dataList = self._compileGlyphData(recalcBBoxes, compact)
-		return bytesjoin(dataList)
-
-	@property
-	def locations(self):
-		locations = []
-		currentLocation = 0
-		for glyphData in self._compileGlyphData():
-			locations.append(currentLocation)
-			currentLocation += len(glyphData)
-		locations.append(currentLocation)
-		return locations
 
 class WOFF2Glyph(getTableModule('glyf').Glyph):
 
