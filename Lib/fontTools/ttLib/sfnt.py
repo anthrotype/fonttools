@@ -17,8 +17,6 @@ from fontTools.misc.py23 import *
 from fontTools.misc import sstruct
 from fontTools.ttLib import getSearchRange, TTLibError, getTableClass, getTableModule
 import struct
-import sys
-import array
 
 
 class SFNTReader(object):
@@ -614,6 +612,8 @@ class WOFF2Glyf(getTableClass('glyf')):
 		self.tableTag = Tag('glyf')
 
 	def reconstruct(self, data, ttFont):
+		import sys, array
+
 		inputDataSize = len(data)
 
 		# unpack transformed glyf table header
@@ -767,6 +767,7 @@ class WOFF2Glyph(getTableModule('glyf').Glyph):
 		glyfTable.instructionStream = instructionStream[instructionLength:]
 
 	def decodeTriplets(self, nPoints, glyfTable):
+		import array
 
 		def withSign(flag, baseval):
 			assert 0 <= baseval and baseval < 65536, 'integer overflow'
