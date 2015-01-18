@@ -212,6 +212,11 @@ class TTFont(object):
 			tmp = file
 		writer = sfnt.SFNTWriter(tmp, numTables, self.sfntVersion, self.flavor, self.flavorData)
 		
+		if self.flavor == "woff2":
+			# normalise bounding boxes when compiling WOFF2 glyf table, so that simple glyph
+			# bbox data can be recalculated on decompile, instead of being stored in bboxStream
+			self.recalcBBoxes = True
+
 		done = []
 		for tag in tags:
 			self._writeTable(tag, writer, done)
