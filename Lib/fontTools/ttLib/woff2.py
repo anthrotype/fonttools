@@ -39,28 +39,22 @@ class WOFF2Reader(SFNTReader):
 
 		# WOFF2 font data is compressed in a single stream comprising all tables
 		# so it must be decompressed once as a whole
-		uncompressedSize = 0  # size of the original uncompressed font data
-		compressedDataOffset = woff2DirectorySize  # offset to the compressed font data
-		for entry in self.tables.values():
-			uncompressedSize += entry.length
-			compressedDataOffset += len(entry.toString())
-		self.file.seek(compressedDataOffset)
+		uncompressedDataSize = offset
 		compressedData = self.file.read(self.totalCompressedSize)
 		decompressedData = brotli.decompress(compressedData)
-		if len(decompressedData) != uncompressedSize:
+		if len(decompressedData) != uncompressedDataSize:
 			raise TTLibError(
-				'unexpected size for uncompressed font data: expected %d, found %d'
-				% (uncompressedSize, len(decompressedData)))
-		# store decompressed data in a file-like 'fontBuffer' attribute of reader
-		self.fontBuffer = StringIO(decompressedData)
-		self.tmp = None
+				'unexpected size for decompressed font data: expected %d, found %d'
+				% (uncompressedDataSize, len(decompressedData)))
+		self.transformBuffer = StringIO(decompressedData)
+		self.tempFont = None
 
 		# Load flavor data if any
 		self.flavorData = WOFFFlavorData(self)
 
 	def __getitem__(self, tag):
 		entry = self.tables[Tag(tag)]
-		rawData = entry.loadData(self.fontBuffer)
+		rawData = entry.loadData(self.transformBuffer)
 		if not entry.transform:
 			return rawData
 
@@ -70,32 +64,41 @@ class WOFF2Reader(SFNTReader):
 			# table already reconstructed, return compiled data
 			return entry.data
 
-		if self.tmp is None:
-			# initialise temp font object to store reconstructed tables
-			self.tmp = TTFont(sfntVersion=self.sfntVersion, flavor=self.flavor, recalcBBoxes=False)
-			self.tmp['maxp'] = getTableClass('maxp')()
-			self.tmp['head'] = getTableClass('head')()
-			self.tmp['loca'] = getTableClass('loca')()
+		if self.tempFont is None:
+			# initialise temporary font object to store reconstructed tables
+			self.tempFont = TTFont(sfntVersion=self.sfntVersion, flavor=self.flavor,
+					recalcBBoxes=False)
+			self.tempFont['maxp'] = getTableClass('maxp')()
+			self.tempFont['head'] = getTableClass('head')()
+			self.tempFont['loca'] = getTableClass('loca')()
 
 		if tag == 'glyf':
 			table = WOFF2Glyf()
-			self.tmp[tag] = table
+			self.tempFont['glyf'] = table
 			# reconstruct both glyf and loca tables
-			table.reconstruct(rawData, self.tmp)
-			# return compiled glyf data
-			entry.data = data = table.compile(self.tmp)
+			table.reconstruct(rawData, self.tempFont)
 		elif tag == 'loca':
-			table = self.tmp[tag]
-			if 'glyf' not in self.tmp:
-				# make sure glyf is reconstructed first
+			if 'glyf' not in self.tempFont:
+				# make sure glyf is loaded first
 				self['glyf']
-			# return compiled loca data
-			entry.data = data = table.compile(self.tmp)
+			table = self.tempFont['loca']
 
-		if len(data) != entry.origLength:
+		entry.data = data = table.compile(self.tempFont)
+
+		currLength = len(data)
+		if currLength != entry.origLength:
 			raise TTLibError(
 				"reconstructed '%s' table doesn't match original size: expected %d, found %d"
-				% (tag, entry.origLength, len(data)))
+				% (tag, entry.origLength, currLength))
+
+		if tag == 'loca':
+			origIndexFormat = self.tempFont['glyf'].indexFormat
+			currIndexFormat = self.tempFont['head'].indexToLocFormat
+			if currIndexFormat != origIndexFormat:
+				raise TTLibError(
+					"reconstructed 'loca' table has wrong index format: expected %d, found %d"
+					% (origIndexFormat, currIndexFormat))
+
 		return data
 
 
@@ -398,9 +401,6 @@ class WOFF2Glyf(getTableClass('glyf')):
 			glyphName = glyphOrder[i]
 			glyph = WOFF2Glyph(i, self)
 			self.glyphs[glyphName] = glyph
-
-		# set loca index format
-		ttFont['head'].indexToLocFormat = self.indexFormat
 
 	def decompile(self, data, loca, lazy=False):
 		last = int(loca[0])
