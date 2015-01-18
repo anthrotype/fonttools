@@ -547,7 +547,10 @@ class Glyph(object):
 			if flag == lastflag and repeat != 255:
 				repeat = repeat + 1
 				if repeat == 1:
-					compressedflags.append(flag)
+					# use repeat even if there are only two identical values,
+					# as per WOFF2 specs, section 5.4.
+					compressedflags[-1] = flag | flagRepeat
+					compressedflags.append(repeat)
 				else:
 					compressedflags[-2] = flag | flagRepeat
 					compressedflags[-1] = repeat
