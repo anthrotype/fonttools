@@ -15,7 +15,7 @@ a table's length chages you need to rewrite the whole file anyway.
 from __future__ import print_function, division, absolute_import
 from fontTools.misc.py23 import *
 from fontTools.misc import sstruct
-from fontTools.ttLib import getSearchRange
+from fontTools.ttLib import getSearchRange, TTLibError
 import struct
 
 
@@ -45,6 +45,10 @@ class SFNTReader(object):
 			self.flavor = "woff"
 			self.DirectoryEntry = WOFFDirectoryEntry
 			sstruct.unpack(woffDirectoryFormat, self.file.read(woffDirectorySize), self)
+		elif self.sfntVersion == b"wOF2":
+			self.flavor = "woff2"
+			self.DirectoryEntry = WOFF2DirectoryEntry
+			sstruct.unpack(woff2DirectoryFormat, self.file.read(woff2DirectorySize), self)
 		else:
 			sstruct.unpack(sfntDirectoryFormat, self.file.read(sfntDirectorySize), self)
 		self.sfntVersion = Tag(self.sfntVersion)
@@ -57,6 +61,27 @@ class SFNTReader(object):
 			entry = self.DirectoryEntry()
 			entry.fromFile(self.file)
 			self.tables[Tag(entry.tag)] = entry
+
+		if self.flavor == "woff2":
+			# WOFF2 doesn't store offsets to individual tables; to access table data
+			# randomly, we must reconstruct the offsets from the tables' lengths
+			offset = 0
+			for entry in self.tables.values():
+				entry.offset = offset
+				offset += entry.length
+
+			# WOFF2 font data is compressed in a single stream comprising all tables
+			# so it must be decompressed once as a whole
+			totalUncompressedSize = offset
+			compressedData = self.file.read(self.totalCompressedSize)
+			import brotli
+			decompressedData = brotli.decompress(compressedData)
+			if len(decompressedData) != totalUncompressedSize:
+				raise TTLibError(
+					'unexpected size for decompressed font data: expected %d, found %d'
+					% (totalUncompressedSize, len(decompressedData)))
+			self.transformBuffer = StringIO(decompressedData)
+			self.tempFont = None
 
 		# Load flavor data if any
 		if self.flavor == "woff":
@@ -323,6 +348,70 @@ woffDirectoryEntryFormat = """
 
 woffDirectoryEntrySize = sstruct.calcsize(woffDirectoryEntryFormat)
 
+woff2DirectoryFormat = """
+		> # big endian
+		signature:           4s   # "wOF2"
+		sfntVersion:         4s
+		length:              L    # total woff2 file size
+		numTables:           H    # number of tables
+		reserved:            H    # set to 0
+		totalSfntSize:       L    # uncompressed size
+		totalCompressedSize: L    # compressed size
+		majorVersion:        H    # major version of WOFF file
+		minorVersion:        H    # minor version of WOFF file
+		metaOffset:          L    # offset to metadata block
+		metaLength:          L    # length of compressed metadata
+		metaOrigLength:      L    # length of uncompressed metadata
+		privOffset:          L    # offset to private data block
+		privLength:          L    # length of private data block
+"""
+
+woff2DirectorySize = sstruct.calcsize(woff2DirectoryFormat)
+
+woff2KnownTags = (
+	"cmap", "head", "hhea", "hmtx", "maxp", "name", "OS/2", "post", "cvt ",
+	"fpgm", "glyf", "loca", "prep", "CFF ", "VORG", "EBDT", "EBLC", "gasp",
+	"hdmx", "kern", "LTSH", "PCLT", "VDMX", "vhea", "vmtx", "BASE", "GDEF",
+	"GPOS", "GSUB", "EBSC", "JSTF", "MATH", "CBDT", "CBLC", "COLR", "CPAL",
+	"SVG ", "sbix", "acnt", "avar", "bdat", "bloc", "bsln", "cvar", "fdsc",
+	"feat", "fmtx", "fvar", "gvar", "hsty", "just", "lcar", "mort", "morx",
+	"opbd", "prop", "trak", "Zapf", "Silf", "Glat", "Gloc", "Feat", "Sill")
+
+woff2FlagsFormat = """
+		> # big endian
+		flags: B  # table type and flags
+"""
+
+woff2FlagsSize = sstruct.calcsize(woff2FlagsFormat)
+
+woff2UnknownTagFormat = """
+		> # big endian
+		tag: 4s  # 4-byte tag (optional)
+"""
+
+woff2UnknownTagSize = sstruct.calcsize(woff2UnknownTagFormat)
+
+woff2Base128MaxSize = 5
+woff2DirectoryEntryMaxSize = woff2FlagsSize + woff2UnknownTagSize + 2 * woff2Base128MaxSize
+
+woff2TransformedTableTags = ('glyf', 'loca')
+
+woff2GlyfTableFormat = """
+		> # big endian
+		version:                  L  # = 0x00000000
+		numGlyphs:                H  # Number of glyphs
+		indexFormat:              H  # Offset format for loca table
+		nContourStreamSize:       L  # Size of nContour stream
+		nPointsStreamSize:        L  # Size of nPoints stream
+		flagStreamSize:           L  # Size of flag stream
+		glyphStreamSize:          L  # Size of glyph stream
+		compositeStreamSize:      L  # Size of composite stream
+		bboxStreamSize:           L  # Comnined size of bboxBitmap and bboxStream
+		instructionStreamSize:    L  # Size of instruction stream
+"""
+
+woff2GlyfTableFormatSize = sstruct.calcsize(woff2GlyfTableFormat)
+
 
 class DirectoryEntry(object):
 	
@@ -400,6 +489,54 @@ class WOFFDirectoryEntry(DirectoryEntry):
 			self.length = len(rawData)
 		return rawData
 
+class WOFF2DirectoryEntry(DirectoryEntry):
+
+	def fromFile(self, file):
+		pos = file.tell()
+		data = file.read(woff2DirectoryEntryMaxSize)
+		left = self.fromString(data)
+		consumed = len(data) - len(left)
+		file.seek(pos + consumed)
+
+	def fromString(self, data):
+		dummy, data = sstruct.unpack2(woff2FlagsFormat, data, self)
+		if self.flags & 0x3F == 0x3F:
+			# if bits [0..5] of the flags byte == 63, read a 4-byte arbitrary tag value
+			dummy, data = sstruct.unpack2(woff2UnknownTagFormat, data, self)
+		else:
+			# otherwise, tag is derived from a fixed 'Known Tags' table
+			self.tag = woff2KnownTags[self.flags & 0x3F]
+		self.tag = Tag(self.tag)
+		if self.flags & 0xC0 != 0:
+			raise TTLibError('bits 6-7 are reserved and must be 0')
+		# UIntBase128 value specifying the table's length in an uncompressed font
+		self.origLength, data = unpackBase128(data)
+		self.transform = False
+		self.length = self.origLength
+		if self.tag in woff2TransformedTableTags:
+			# only glyf and loca are subject to transformation
+			self.transform = True
+			# Optional UIntBase128 specifying the length of the 'transformed' table.
+			# For simplicity, the 'transformLength' is called 'length' here.
+			self.length, data = unpackBase128(data)
+		# transformed loca is reconstructed as part of the glyf decoding process
+		# and its length must always be 0
+		if self.tag == 'loca' and self.length != 0:
+			raise TTLibError(
+				"incorrect size of transformed 'loca' table: expected 0, received %d bytes"
+				% (len(self.length)))
+		# return left over data
+		return data
+
+	def toString(self):
+		data = struct.pack('B', self.flags)
+		if (self.flags & 0x3f) == 0x3f:
+			data += struct.pack('>L', self.tag)
+		data += packBase128(self.origLength)
+		if self.transform:
+			data += packBase128(self.length)
+		return data
+
 class WOFFFlavorData():
 
 	Flavor = 'woff'
@@ -426,6 +563,46 @@ class WOFFFlavorData():
 				assert len(data) == reader.privLength
 				self.privData = data
 
+
+def unpackBase128(data):
+	""" A UIntBase128 encoded number is a sequence of bytes for which the most
+	significant bit is set for all but the last byte, and clear for the last byte.
+	The number itself is base 128 encoded in the lower 7 bits of each byte.
+	"""
+	result = 0
+	for i in range(5):
+		if len(data) == 0:
+			raise TTLibError('not enough data to unpack UIntBase128')
+		code, = struct.unpack(">B", data[0])
+		data = data[1:]
+		# if any of the top seven bits are set then we're about to overflow
+		if result & 0xFE000000:
+			raise TTLibError('UIntBase128 value exceeds 2**32-1')
+		# set current value = old value times 128 bitwise-or (byte bitwise-and 127)
+		result = (result << 7) | (code & 0x7f)
+		# repeat until the most significant bit of byte is false
+		if (code & 0x80) == 0:
+			# return result plus left over data
+			return result, data
+	# make sure not to exceed the size bound
+	raise TTLibError('UIntBase128-encoded sequence is longer than 5 bytes')
+
+def base128Size(n):
+	size = 1
+	while n >= 128:
+		size += 1
+		n >>= 7
+	return size
+
+def packBase128(n):
+	data = b''
+	size = base128Size(n)
+	for i in range(size):
+		b = (n >> (7 * (size - i - 1))) & 0x7f
+		if i < size - 1:
+			b |= 0x80
+		data += struct.pack('B', b)
+	return data
 
 def calcChecksum(data):
 	"""Calculate the checksum for an arbitrary block of data.
