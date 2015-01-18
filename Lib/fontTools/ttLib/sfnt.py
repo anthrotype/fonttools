@@ -580,9 +580,7 @@ class WOFF2DirectoryEntry(DirectoryEntry):
 			data += packBase128(self.length)
 		return data
 
-class WOFFFlavorData():
-
-	Flavor = 'woff'
+class WOFFFlavorData(object):
 
 	def __init__(self, reader=None):
 		self.majorVersion = None
@@ -596,8 +594,18 @@ class WOFFFlavorData():
 				reader.file.seek(reader.metaOffset)
 				rawData = reader.file.read(reader.metaLength)
 				assert len(rawData) == reader.metaLength
-				import zlib
-				data = zlib.decompress(rawData)
+				flavor = reader.flavor
+				# decompress metadata using either zlib or brotli
+				if flavor == "woff":
+					import zlib
+					data = zlib.decompress(rawData)
+				elif flavor == "woff2":
+					import brotli
+					data = brotli.decompress(rawData)
+				else:
+					from fontTools import ttLib
+					raise ttLib.TTLibError(
+						"Invalid flavor '%s'. Must be either 'woff' or 'woff2" % flavor)
 				assert len(data) == reader.metaOrigLength
 				self.metaData = data
 			if reader.privLength:
