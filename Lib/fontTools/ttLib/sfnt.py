@@ -34,8 +34,7 @@ class SFNTReader(object):
 			sstruct.unpack(ttcHeaderFormat, self.file.read(ttcHeaderSize), self)
 			assert self.Version == 0x00010000 or self.Version == 0x00020000, "unrecognized TTC version 0x%08x" % self.Version
 			if not 0 <= fontNumber < self.numFonts:
-				from fontTools import ttLib
-				raise ttLib.TTLibError("specify a font number between 0 and %d (inclusive)" % (self.numFonts - 1))
+				raise TTLibError("specify a font number between 0 and %d (inclusive)" % (self.numFonts - 1))
 			offsetTable = struct.unpack(">%dL" % self.numFonts, self.file.read(self.numFonts * 4))
 			if self.Version == 0x00020000:
 				pass # ignoring version 2.0 signatures
@@ -54,8 +53,7 @@ class SFNTReader(object):
 		self.sfntVersion = Tag(self.sfntVersion)
 
 		if self.sfntVersion not in ("\x00\x01\x00\x00", "OTTO", "true"):
-			from fontTools import ttLib
-			raise ttLib.TTLibError("Not a TrueType or OpenType font (bad sfntVersion)")
+			raise TTLibError("Not a TrueType or OpenType font (bad sfntVersion)")
 		self.tables = {}
 		for i in range(self.numTables):
 			entry = self.DirectoryEntry()
@@ -154,8 +152,7 @@ class SFNTWriter(object):
 	def __setitem__(self, tag, data):
 		"""Write raw table data to disk."""
 		if tag in self.tables:
-			from fontTools import ttLib
-			raise ttLib.TTLibError("cannot rewrite '%s' table: length does not match directory entry" % tag)
+			raise TTLibError("cannot rewrite '%s' table: length does not match directory entry" % tag)
 
 		entry = self.DirectoryEntry()
 		entry.tag = tag
@@ -184,8 +181,7 @@ class SFNTWriter(object):
 		"""
 		tables = sorted(self.tables.items())
 		if len(tables) != self.numTables:
-			from fontTools import ttLib
-			raise ttLib.TTLibError("wrong number of tables; expected %d, found %d" % (self.numTables, len(tables)))
+			raise TTLibError("wrong number of tables; expected %d, found %d" % (self.numTables, len(tables)))
 
 		if self.flavor == "woff":
 			self.signature = b"wOFF"
