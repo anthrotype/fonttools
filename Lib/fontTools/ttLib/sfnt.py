@@ -181,6 +181,12 @@ class SFNTWriter(object):
 			self.DirectoryEntry = WOFFDirectoryEntry
 
 			self.signature = "wOFF"
+		elif self.flavor == "woff2":
+			self.directoryFormat = woff2DirectoryFormat
+			self.directorySize = woff2DirectorySize
+			self.DirectoryEntry = WOFF2DirectoryEntry
+
+			self.signature = "wOF2"
 		else:
 			assert not self.flavor,  "Unknown flavor '%s'" % self.flavor
 			self.directoryFormat = sfntDirectoryFormat
@@ -189,12 +195,21 @@ class SFNTWriter(object):
 
 			self.searchRange, self.entrySelector, self.rangeShift = getSearchRange(numTables, 16)
 
-		self.nextTableOffset = self.directorySize + numTables * self.DirectoryEntry.formatSize
-		# clear out directory area
-		self.file.seek(self.nextTableOffset)
-		# make sure we're actually where we want to be. (old cStringIO bug)
-		self.file.write(b'\0' * (self.nextTableOffset - self.file.tell()))
+		if self.flavor in ("woff", "woff2"):
+			# calculate SFNT offsets for WOFF/WOFF2 checksum calculation purposes
+			self.origNextTableOffset = sfntDirectorySize + numTables * sfntDirectoryEntrySize
+		if self.flavor == "woff2":
+			# make temporary buffer for storing raw or transformed table data before compression
+			self.transformBuffer = StringIO()
+			self.nextTableOffset = 0
+		else:
+			self.nextTableOffset = self.directorySize + numTables * self.DirectoryEntry.formatSize
+			# clear out directory area
+			self.file.seek(self.nextTableOffset)
+			# make sure we're actually where we want to be. (old cStringIO bug)
+			self.file.write(b'\0' * (self.nextTableOffset - self.file.tell()))
 		self.tables = {}
+		self.tableOrder = []
 	
 	def __setitem__(self, tag, data):
 		"""Write raw table data to disk."""
@@ -202,43 +217,123 @@ class SFNTWriter(object):
 			raise TTLibError("cannot rewrite '%s' table: length does not match directory entry" % tag)
 
 		entry = self.DirectoryEntry()
-		entry.tag = tag
-		entry.offset = self.nextTableOffset
+		entry.tag = Tag(tag)
+
 		if tag == 'head':
 			entry.checkSum = calcChecksum(data[:8] + b'\0\0\0\0' + data[12:])
+			self.indexFormat, = struct.unpack(">H", data[50:52])
 			self.headTable = data
 			entry.uncompressed = True
 		else:
 			entry.checkSum = calcChecksum(data)
-		entry.saveData (self.file, data)
 
-		self.nextTableOffset = self.nextTableOffset + ((entry.length + 3) & ~3)
-		# Add NUL bytes to pad the table data to a 4-byte boundary.
-		# Don't depend on f.seek() as we need to add the padding even if no
-		# subsequent write follows (seek is lazy), ie. after the final table
-		# in the font.
-		self.file.write(b'\0' * (self.nextTableOffset - self.file.tell()))
-		assert self.nextTableOffset == self.file.tell()
-		
+		if self.flavor in ("woff", "woff2"):
+			entry.origOffset = self.origNextTableOffset
+
+		if self.flavor == "woff2":
+			# check if tag is present in Known Tags table, otherwise set flags to 63
+			entry.flags = 63
+			for i in range(len(woff2KnownTags)):
+				if entry.tag == woff2KnownTags[i]:
+					entry.flags = i
+			# only glyf and loca tables needs to be transformed
+			entry.transformed = False
+			if tag in woff2TransformedTableTags:
+				entry.transformed = True
+			if tag == 'maxp':
+				self.maxpNumGlyphs, = struct.unpack(">H", data[4:6])
+			entry.origLength = len(data)
+			# table data is written to disk at the end
+			entry.data = data
+		else:
+			entry.offset = self.nextTableOffset
+			entry.saveData(self.file, data)
+
+			self.nextTableOffset = self.nextTableOffset + ((entry.length + 3) & ~3)
+			# Add NUL bytes to pad the table data to a 4-byte boundary.
+			# Don't depend on f.seek() as we need to add the padding even if no
+			# subsequent write follows (seek is lazy), ie. after the final table
+			# in the font.
+			self.file.write(b'\0' * (self.nextTableOffset - self.file.tell()))
+			assert self.nextTableOffset == self.file.tell()
+
+		if self.flavor in ("woff", "woff2"):
+			self.origNextTableOffset += (entry.origLength + 3) & ~3
+
 		self.tables[tag] = entry
-	
+		self.tableOrder.append(tag)
+
 	def close(self):
 		"""All tables must have been written to disk. Now write the
 		directory.
 		"""
-		tables = sorted(self.tables.items())
+		if self.flavor == "woff2":
+			if 0:
+				# According to WOFF2 specs, the directory must reflect the 'physical order'
+				# in which the tables have been encoded.
+				tables = sorted(self.tables.items(), key=lambda x: self.tableOrder.index(x[0]))
+			else:
+				# However, for compatibility with current woff2 implementations (e.g. OTS),
+				# we must sort both the directory and table data in ascending order by tag.
+				# See https://github.com/google/woff2/pull/3
+				tables = sorted(self.tables.items())
+				# we also need to 'normalise' the original table offsets used for checksum
+				# calculation
+				offset = sfntDirectorySize + sfntDirectoryEntrySize * len(tables)
+				for tag, entry in tables:
+					entry.origOffset = offset
+					offset = offset + ((entry.origLength + 3) & ~3)
+		else:
+			# SFNT and WOFF table records must be sorted in ascending order by tag
+			tables = sorted(self.tables.items())
 		if len(tables) != self.numTables:
 			raise TTLibError("wrong number of tables; expected %d, found %d" % (self.numTables, len(tables)))
 
-		if self.flavor == "woff":
-			self.signature = b"wOFF"
+		if self.flavor in ("woff", "woff2"):
 			self.reserved = 0
 
-			self.totalSfntSize = 12
-			self.totalSfntSize += 16 * len(tables)
+			# size of uncompressed font
+			self.totalSfntSize = sfntDirectorySize
+			self.totalSfntSize += sfntDirectoryEntrySize * len(tables)
 			for tag, entry in tables:
 				self.totalSfntSize += (entry.origLength + 3) & ~3
 
+			if self.flavor == "woff":
+				self.signature = b"wOFF"
+
+				# start calculating total size of WOFF font
+				offset = woffDirectorySize + len(tables) * woffDirectoryEntrySize
+				for tag, entry in tables:
+					offset = offset + ((entry.length + 3) & ~3)
+			else:
+				self.signature = b"wOF2"
+
+				# for each table, save the data to transformBuffer
+				for tag, entry in tables:
+					data = entry.data
+					entry.offset = self.nextTableOffset
+					entry.saveData(self.transformBuffer, data)
+					self.nextTableOffset += entry.length
+				# start calculating total size of WOFF2 font
+				offset = woff2DirectorySize
+				for tag, entry in tables:
+					offset += len(entry.toString())
+
+				# update head's checkSumAdjustment
+				self.writeMasterChecksum(b"")
+
+				# compress font data
+				self.transformBuffer.seek(0)
+				uncompressedData = self.transformBuffer.read()
+				import brotli
+				compressedData = brotli.compress(uncompressedData, brotli.MODE_FONT)
+				self.totalCompressedSize = len(compressedData)
+
+				offset += self.totalCompressedSize
+				offset = (offset + 3) & ~3
+
+			# calculate offsets and lengths for any metadata and/or private data
+			compressedMetaData = privData = b""
 			data = self.flavorData if self.flavorData else WOFFFlavorData()
 			if data.majorVersion is not None and data.minorVersion is not None:
 				self.majorVersion = data.majorVersion
@@ -250,44 +345,63 @@ class SFNTWriter(object):
 					self.majorVersion = self.minorVersion = 0
 			if data.metaData:
 				self.metaOrigLength = len(data.metaData)
-				self.file.seek(0,2)
-				self.metaOffset = self.file.tell()
-				import zlib
-				compressedMetaData = zlib.compress(data.metaData)
+				self.metaOffset = offset
+				# compress metadata using either zlib or brotli
+				if self.flavor == "woff":
+					import zlib
+					compressedMetaData = zlib.compress(data.metaData)
+				elif self.flavor == "woff2":
+					import brotli
+					compressedMetaData = brotli.compress(data.metaData)
 				self.metaLength = len(compressedMetaData)
-				self.file.write(compressedMetaData)
+				offset += self.metaLength
 			else:
 				self.metaOffset = self.metaLength = self.metaOrigLength = 0
 			if data.privData:
-				self.file.seek(0,2)
-				off = self.file.tell()
-				paddedOff = (off + 3) & ~3
-				self.file.write('\0' * (paddedOff - off))
-				self.privOffset = self.file.tell()
-				self.privLength = len(data.privData)
-				self.file.write(data.privData)
+				privData = data.privData
+				# make sure private data is padded to 4-byte boundary
+				offset = (offset + 3) & ~3
+				self.privOffset = offset
+				self.privLength = len(privData)
+				offset += self.privLength
 			else:
 				self.privOffset = self.privLength = 0
 
-			self.file.seek(0,2)
-			self.length = self.file.tell()
-
+			# total size of WOFF/WOFF2 font, including any metadata or private data
+			self.length = offset
 		else:
 			assert not self.flavor,  "Unknown flavor '%s'" % self.flavor
 			pass
-		
+
 		directory = sstruct.pack(self.directoryFormat, self)
-		
+
 		self.file.seek(self.directorySize)
 		seenHead = 0
 		for tag, entry in tables:
 			if tag == "head":
 				seenHead = 1
 			directory = directory + entry.toString()
-		if seenHead:
+		if seenHead and self.flavor != "woff2":
 			self.writeMasterChecksum(directory)
 		self.file.seek(0)
 		self.file.write(directory)
+
+		if self.flavor == "woff2":
+			# finally write WOFF2 compressed font data to disk
+			self.file.write(compressedData)
+			write4BytePadding(self.file)
+		if self.flavor in ("woff", "woff2"):
+			# write any WOFF/WOFF2 metadata and/or private data
+			if compressedMetaData:
+				self.file.seek(self.metaOffset)
+				assert self.file.tell() == self.metaOffset
+				self.file.write(compressedMetaData)
+				if privData:
+					write4BytePadding(self.file)
+			if privData:
+				self.file.seek(self.privOffset)
+				assert self.file.tell() == self.privOffset
+				self.file.write(privData)
 
 	def _calcMasterChecksum(self, directory):
 		# calculate checkSumAdjustment
@@ -296,8 +410,6 @@ class SFNTWriter(object):
 		for i in range(len(tags)):
 			checksums.append(self.tables[tags[i]].checkSum)
 
-		# TODO(behdad) I'm fairly sure the checksum for woff is not working correctly.
-		# Haven't debugged.
 		if self.DirectoryEntry != SFNTDirectoryEntry:
 			# Create a SFNT directory for checksum calculation purposes
 			self.searchRange, self.entrySelector, self.rangeShift = getSearchRange(self.numTables, 16)
@@ -305,8 +417,10 @@ class SFNTWriter(object):
 			tables = sorted(self.tables.items())
 			for tag, entry in tables:
 				sfntEntry = SFNTDirectoryEntry()
-				for item in ['tag', 'checkSum', 'offset', 'length']:
-					setattr(sfntEntry, item, getattr(entry, item))
+				sfntEntry.tag = entry.tag
+				sfntEntry.checkSum = entry.checkSum
+				sfntEntry.offset = entry.origOffset
+				sfntEntry.length = entry.origLength
 				directory = directory + sfntEntry.toString()
 
 		directory_end = sfntDirectorySize + len(self.tables) * sfntDirectoryEntrySize
@@ -319,10 +433,11 @@ class SFNTWriter(object):
 		return checksumadjustment
 
 	def writeMasterChecksum(self, directory):
+		dst = self.transformBuffer if self.flavor == "woff2" else self.file
 		checksumadjustment = self._calcMasterChecksum(directory)
 		# write the checksum to the file
-		self.file.seek(self.tables['head'].offset + 8)
-		self.file.write(struct.pack(">L", checksumadjustment))
+		dst.seek(self.tables['head'].offset + 8)
+		dst.write(struct.pack(">L", checksumadjustment))
 
 
 # -- sfnt directory helpers and cruft
@@ -913,6 +1028,13 @@ def unpack255UShort(data):
 		result = code
 	# return result plus left over data
 	return result, data
+
+def write4BytePadding(file):
+	"""Write NUL bytes at the end of file to pad data to a 4-byte boundary."""
+	file.seek(0, 2)
+	offset = file.tell()
+	paddedOffset = (offset + 3) & ~3
+	file.write(b'\0' * (paddedOffset - offset))
 
 def calcChecksum(data):
 	"""Calculate the checksum for an arbitrary block of data.
