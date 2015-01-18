@@ -39,13 +39,13 @@ class WOFF2Reader(SFNTReader):
 
 		# WOFF2 font data is compressed in a single stream comprising all tables
 		# so it must be decompressed once as a whole
-		uncompressedDataSize = offset
+		totalUncompressedSize = offset
 		compressedData = self.file.read(self.totalCompressedSize)
 		decompressedData = brotli.decompress(compressedData)
-		if len(decompressedData) != uncompressedDataSize:
+		if len(decompressedData) != totalUncompressedSize:
 			raise TTLibError(
 				'unexpected size for decompressed font data: expected %d, found %d'
-				% (uncompressedDataSize, len(decompressedData)))
+				% (totalUncompressedSize, len(decompressedData)))
 		self.transformBuffer = StringIO(decompressedData)
 		self.tempFont = None
 
@@ -84,11 +84,10 @@ class WOFF2Reader(SFNTReader):
 			table = self.tempFont['loca']
 		entry.data = data = table.compile(self.tempFont)
 
-		currLength = len(data)
-		if currLength != entry.origLength:
+		if len(data) != entry.origLength:
 			raise TTLibError(
 				"reconstructed '%s' table doesn't match original size: expected %d, found %d"
-				% (tag, entry.origLength, currLength))
+				% (tag, entry.origLength, len(data)))
 
 		if tag == 'loca':
 			origIndexFormat = self.tempFont['glyf'].indexFormat
