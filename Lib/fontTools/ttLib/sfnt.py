@@ -15,8 +15,10 @@ a table's length chages you need to rewrite the whole file anyway.
 from __future__ import print_function, division, absolute_import
 from fontTools.misc.py23 import *
 from fontTools.misc import sstruct
-from fontTools.ttLib import getSearchRange, TTLibError
+from fontTools.ttLib import getSearchRange, TTLibError, getTableClass, getTableModule
 import struct
+import sys
+import array
 
 
 class SFNTReader(object):
@@ -55,19 +57,18 @@ class SFNTReader(object):
 		if self.sfntVersion not in ("\x00\x01\x00\x00", "OTTO", "true"):
 			raise TTLibError("Not a TrueType or OpenType font (bad sfntVersion)")
 		self.tables = {}
+		offset = 0
 		for i in range(self.numTables):
 			entry = self.DirectoryEntry()
 			entry.fromFile(self.file)
 			self.tables[Tag(entry.tag)] = entry
-
-		if self.flavor == "woff2":
-			# WOFF2 doesn't store offsets to individual tables; to access table data
-			# randomly, we must reconstruct the offsets from the tables' lengths
-			offset = 0
-			for entry in self.tables.values():
+			if self.flavor == "woff2":
+				# WOFF2 doesn't store offsets to individual tables. These can be 
+				# calculated by summing up the tables' lengths (there's no padding)
 				entry.offset = offset
 				offset += entry.length
 
+		if self.flavor == "woff2":
 			# WOFF2 font data is compressed in a single stream comprising all tables
 			# so it must be decompressed once as a whole
 			totalUncompressedSize = offset
@@ -94,21 +95,69 @@ class SFNTReader(object):
 		return self.tables.keys()
 	
 	def __getitem__(self, tag):
-		"""Fetch the raw table data."""
+		"""Fetch the raw table data. Reconstruct data if table is transformed."""
 		entry = self.tables[Tag(tag)]
-		data = entry.loadData (self.file)
-		if self.checkChecksums:
-			if tag == 'head':
-				# Beh: we have to special-case the 'head' table.
-				checksum = calcChecksum(data[:8] + b'\0\0\0\0' + data[12:])
-			else:
-				checksum = calcChecksum(data)
-			if self.checkChecksums > 1:
-				# Be obnoxious, and barf when it's wrong
-				assert checksum == entry.checksum, "bad checksum for '%s' table" % tag
-			elif checksum != entry.checkSum:
-				# Be friendly, and just print a warning.
-				print("bad checksum for '%s' table" % tag)
+
+		if self.flavor != "woff2":
+			data = entry.loadData(self.file)
+			if self.checkChecksums:
+				if tag == 'head':
+					# Beh: we have to special-case the 'head' table.
+					checksum = calcChecksum(data[:8] + b'\0\0\0\0' + data[12:])
+				else:
+					checksum = calcChecksum(data)
+				if self.checkChecksums > 1:
+					# Be obnoxious, and barf when it's wrong
+					assert checksum == entry.checksum, "bad checksum for '%s' table" % tag
+				elif checksum != entry.checkSum:
+					# Be friendly, and just print a warning.
+					print("bad checksum for '%s' table" % tag)
+			return data
+
+		rawData = entry.loadData(self.transformBuffer)
+		if not entry.transformed:
+			return rawData
+
+		if tag not in woff2TransformedTableTags:
+			raise TTLibError('transform for the tag "%s" is not known')
+
+		if hasattr(entry, 'data'):
+			# table already reconstructed, return compiled data
+			return entry.data
+
+		if self.tempFont is None:
+			from fontTools.ttLib import TTFont
+			# initialise temporary font object to store reconstructed tables
+			self.tempFont = TTFont(sfntVersion=self.sfntVersion, flavor=self.flavor,
+					recalcBBoxes=False)
+			self.tempFont['maxp'] = getTableClass('maxp')()
+			self.tempFont['head'] = getTableClass('head')()
+			self.tempFont['loca'] = getTableClass('loca')()
+
+		if tag == 'glyf':
+			table = WOFF2Glyf()
+			self.tempFont['glyf'] = table
+			# reconstruct both glyf and loca tables
+			table.reconstruct(rawData, self.tempFont)
+		elif tag == 'loca':
+			if 'glyf' not in self.tempFont:
+				# make sure glyf is loaded first
+				self['glyf']
+			table = self.tempFont['loca']
+		entry.data = data = table.compile(self.tempFont)
+
+		if len(data) != entry.origLength:
+			raise TTLibError(
+				"reconstructed '%s' table doesn't match original size: expected %d, found %d"
+				% (tag, entry.origLength, len(data)))
+
+		if tag == 'loca':
+			origIndexFormat = self.tempFont['glyf'].indexFormat
+			currIndexFormat = self.tempFont['head'].indexToLocFormat
+			if currIndexFormat != origIndexFormat:
+				raise TTLibError(
+					"reconstructed 'loca' table has wrong index format: expected %d, found %d"
+					% (origIndexFormat, currIndexFormat))
 		return data
 	
 	def __delitem__(self, tag):
@@ -507,11 +556,11 @@ class WOFF2DirectoryEntry(DirectoryEntry):
 			raise TTLibError('bits 6-7 are reserved and must be 0')
 		# UIntBase128 value specifying the table's length in an uncompressed font
 		self.origLength, data = unpackBase128(data)
-		self.transform = False
+		self.transformed = False
 		self.length = self.origLength
 		if self.tag in woff2TransformedTableTags:
 			# only glyf and loca are subject to transformation
-			self.transform = True
+			self.transformed = True
 			# Optional UIntBase128 specifying the length of the 'transformed' table.
 			# For simplicity, the 'transformLength' is called 'length' here.
 			self.length, data = unpackBase128(data)
@@ -529,7 +578,7 @@ class WOFF2DirectoryEntry(DirectoryEntry):
 		if (self.flags & 0x3f) == 0x3f:
 			data += struct.pack('>L', self.tag)
 		data += packBase128(self.origLength)
-		if self.transform:
+		if self.transformed:
 			data += packBase128(self.length)
 		return data
 
@@ -558,6 +607,238 @@ class WOFFFlavorData():
 				data = reader.file.read(reader.privLength)
 				assert len(data) == reader.privLength
 				self.privData = data
+
+class WOFF2Glyf(getTableClass('glyf')):
+
+	def __init__(self):
+		self.tableTag = Tag('glyf')
+
+	def reconstruct(self, data, ttFont):
+		inputDataSize = len(data)
+
+		# unpack transformed glyf table header
+		dummy, data = sstruct.unpack2(woff2GlyfTableFormat, data, self)
+		numGlyphs = self.numGlyphs
+		substreamOffset = woff2GlyfTableFormatSize
+
+		# slice stream data into seven individual sub-streams
+		self.nContourStream = data[:self.nContourStreamSize]
+		data = data[self.nContourStreamSize:]
+		substreamOffset += self.nContourStreamSize
+
+		self.nPointsStream = data[:self.nPointsStreamSize]
+		data = data[self.nPointsStreamSize:]
+		substreamOffset += self.nPointsStreamSize
+
+		self.flagStream = data[:self.flagStreamSize]
+		data = data[self.flagStreamSize:]
+		substreamOffset += self.flagStreamSize
+
+		self.glyphStream = data[:self.glyphStreamSize]
+		data = data[self.glyphStreamSize:]
+		substreamOffset += self.glyphStreamSize
+
+		self.compositeStream = data[:self.compositeStreamSize]
+		data = data[self.compositeStreamSize:]
+		substreamOffset += self.compositeStreamSize
+
+		combinedBboxStream = data[:self.bboxStreamSize]
+		data = data[self.bboxStreamSize:]
+		substreamOffset += self.bboxStreamSize
+
+		self.instructionStream = data[:self.instructionStreamSize]
+		data = data[self.instructionStreamSize:]
+		substreamOffset += self.instructionStreamSize
+
+		# check all input data was read and no more is left
+		if substreamOffset != inputDataSize:
+			raise TTLibError(
+				"incorrect size of transformed 'glyf' table: expected %d, received %d bytes"
+				% (substreamOffset, inputDataSize))
+
+		# get bboxBitmap from bboxStream
+		bboxBitmapSize = ((numGlyphs + 31) >> 5) << 2
+		bboxBitmap = combinedBboxStream[:bboxBitmapSize]
+		self.bboxBitmap = array.array('B', bboxBitmap)
+		self.bboxStream = combinedBboxStream[bboxBitmapSize:]
+
+		# cast nContourStream as a numGlyphs-long Int16 array
+		self.nContourStream = array.array("h", self.nContourStream)
+		if sys.byteorder != "big":
+			self.nContourStream.byteswap()
+		assert len(self.nContourStream) == numGlyphs
+
+		# build temp glyphOrder with dummy glyph names
+		self.glyphOrder = glyphOrder = []
+		for i in range(numGlyphs):
+			glyphName = "glyph%d" % i
+			glyphOrder.append(glyphName)
+		ttFont.setGlyphOrder(glyphOrder)
+
+		# decompile each glyph
+		self.glyphs = {}
+		for i in range(numGlyphs):
+			glyphName = glyphOrder[i]
+			glyph = WOFF2Glyph(i, self)
+			self.glyphs[glyphName] = glyph
+
+	def decompile(self, data, loca, lazy=False):
+		last = int(loca[0])
+		self.glyphs = {}
+		self.glyphOrder = glyphOrder = []
+		for i in range(0, len(loca)-1):
+			glyphName = 'glyph%s' % i
+			glyphOrder.append(glyphName)
+			next = int(loca[i+1])
+			glyphdata = data[last:next]
+			if len(glyphdata) != (next - last):
+				raise TTLibError("not enough 'glyf' table data")
+			glyph = getTableModule('glyf').Glyph(glyphdata)
+			self.glyphs[glyphName] = glyph
+			last = next
+		if len(data) - next >= 4:
+			raise TTLibError(
+				"too much 'glyf' table data: expected %d, received %d bytes" %
+					(next, len(data)))
+		if lazy is False:
+			for glyph in self.glyphs.values():
+				glyph.expand(self)
+
+class WOFF2Glyph(getTableModule('glyf').Glyph):
+
+	def __init__(self, index, glyfTable):
+		self.numberOfContours = glyfTable.nContourStream[index]
+		if self.numberOfContours < 0:
+			self.decompileComponents(glyfTable)
+		elif self.numberOfContours > 0:
+			self.decompileCoordinates(glyfTable)
+		self.decompileBBox(index, glyfTable)
+
+	def decompileComponents(self, glyfTable):
+		data = glyfTable.compositeStream
+		self.components = []
+		more = 1
+		haveInstructions = 0
+		while more:
+			component = getTableModule('glyf').GlyphComponent()
+			more, haveInstr, data = component.decompile(data, glyfTable)
+			haveInstructions = haveInstructions | haveInstr
+			self.components.append(component)
+		glyfTable.compositeStream = data
+		if haveInstructions:
+			self.decompileInstructions(glyfTable)
+
+	def decompileCoordinates(self, glyfTable):
+		nPointsStream = glyfTable.nPointsStream
+		endPtsOfContours = []
+		endPoint = -1
+		for i in range(self.numberOfContours):
+			ptsOfContour, nPointsStream = unpack255UShort(nPointsStream)
+			endPoint += ptsOfContour
+			endPtsOfContours.append(endPoint)
+		self.endPtsOfContours = endPtsOfContours
+		nPoints = endPoint + 1
+		glyfTable.nPointsStream = nPointsStream
+		self.decodeTriplets(nPoints, glyfTable)
+		self.decompileInstructions(glyfTable)
+
+	def decompileBBox(self, index, glyfTable):
+		if self.numberOfContours == 0:
+			return
+		bitmap = glyfTable.bboxBitmap
+		bbox = glyfTable.bboxStream
+		haveBBox = bitmap[index >> 3] & (0x80 >> (index & 7))
+		if self.numberOfContours < 0 and not haveBBox:
+			raise TTLibError('no bbox values for composite glyph %d' % index)
+		if haveBBox:
+			self.xMin, self.yMin, self.xMax, self.yMax = struct.unpack('>hhhh', bbox[:8])
+			glyfTable.bboxStream = bbox[8:]
+		else:
+			self.recalcBounds(glyfTable)
+
+	def decompileInstructions(self, glyfTable):
+		glyphStream = glyfTable.glyphStream
+		instructionStream = glyfTable.instructionStream
+		instructionLength, glyphStream = unpack255UShort(glyphStream)
+		from fontTools.ttLib.tables import ttProgram
+		self.program = ttProgram.Program()
+		self.program.fromBytecode(instructionStream[:instructionLength])
+		glyfTable.glyphStream = glyphStream
+		glyfTable.instructionStream = instructionStream[instructionLength:]
+
+	def decodeTriplets(self, nPoints, glyfTable):
+
+		def withSign(flag, baseval):
+			assert 0 <= baseval and baseval < 65536, 'integer overflow'
+			return baseval if flag & 1 else -baseval
+
+		flagStream = glyfTable.flagStream
+		flagSize = nPoints
+		if flagSize > len(flagStream):
+			raise TTLibError("not enough 'flagStream' data")
+		flagsData = flagStream[:flagSize]
+		glyfTable.flagStream = flagStream[flagSize:]
+		flags = array.array('B', flagsData)
+
+		glyphStream = glyfTable.glyphStream
+		triplets = array.array('B', glyphStream)
+		nTriplets = len(triplets)
+		assert nPoints <= nTriplets
+
+		x = 0
+		y = 0
+		coordinates = getTableModule('glyf').GlyphCoordinates.zeros(nPoints)
+		onCurves = []
+		tripletIndex = 0
+		for i in range(nPoints):
+			flag = flags[i]
+			onCurve = not bool(flag >> 7)
+			flag &= 0x7f
+			if flag < 84:
+				nBytes = 1
+			elif flag < 120:
+				nBytes = 2
+			elif flag < 124:
+				nBytes = 3
+			else:
+				nBytes = 4
+			assert ((tripletIndex + nBytes) <= nTriplets)
+			if flag < 10:
+				dx = 0
+				dy = withSign(flag, ((flag & 14) << 7) + triplets[tripletIndex])
+			elif flag < 20:
+				dx = withSign(flag, (((flag - 10) & 14) << 7) + triplets[tripletIndex])
+				dy = 0
+			elif flag < 84:
+				b0 = flag - 20
+				b1 = triplets[tripletIndex]
+				dx = withSign(flag, 1 + (b0 & 0x30) + (b1 >> 4))
+				dy = withSign(flag >> 1, 1 + ((b0 & 0x0c) << 2) + (b1 & 0x0f))
+			elif flag < 120:
+				b0 = flag - 84
+				dx = withSign(flag, 1 + ((b0 // 12) << 8) + triplets[tripletIndex])
+				dy = withSign(flag >> 1,
+					1 + (((b0 % 12) >> 2) << 8) + triplets[tripletIndex + 1])
+			elif flag < 124:
+				b2 = triplets[tripletIndex + 1]
+				dx = withSign(flag, (triplets[tripletIndex] << 4) + (b2 >> 4))
+				dy = withSign(flag >> 1,
+					((b2 & 0x0f) << 8) + triplets[tripletIndex + 2])
+			else:
+				dx = withSign(flag,
+					(triplets[tripletIndex] << 8) + triplets[tripletIndex + 1])
+				dy = withSign(flag >> 1,
+					(triplets[tripletIndex + 2] << 8) + triplets[tripletIndex + 3])
+			tripletIndex += nBytes
+			x += dx
+			y += dy
+			coordinates[i] = (x, y)
+			onCurves.append(int(onCurve))
+		bytesConsumed = tripletIndex
+		glyfTable.glyphStream = glyphStream[bytesConsumed:]
+
+		self.flags = array.array("B", onCurves)
+		self.coordinates = coordinates
 
 
 def unpackBase128(data):
@@ -599,6 +880,30 @@ def packBase128(n):
 			b |= 0x80
 		data += struct.pack('B', b)
 	return data
+
+def unpack255UShort(data):
+	"""Based on MicroType Express specification, section 6.1.1."""
+	code, = struct.unpack(">B", data[:1])
+	data = data[1:]
+	if code == 253:
+		# read two more bytes as an unsigned short
+		result, = struct.unpack(">H", data[:2])
+		data = data[2:]
+	elif code == 254:
+		# read another byte, plus 253 * 2
+		result, = struct.unpack(">B", data[:1])
+		result += 506
+		data = data[1:]
+	elif code == 255:
+		# read another byte, plus 253
+		result, = struct.unpack(">B", data[:1])
+		result += 253
+		data = data[1:]
+	else:
+		# leave as is if lower than 253
+		result = code
+	# return result plus left over data
+	return result, data
 
 def calcChecksum(data):
 	"""Calculate the checksum for an arbitrary block of data.
