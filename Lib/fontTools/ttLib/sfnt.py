@@ -113,11 +113,8 @@ class SFNTReader(object):
 			return data
 
 		rawData = entry.loadData(self.transformBuffer)
-		if not entry.transformed:
-			return rawData
-
 		if tag not in woff2TransformedTableTags:
-			raise TTLibError('transform for the tag "%s" is not known')
+			return rawData
 
 		if hasattr(entry, 'data'):
 			# table already reconstructed, return compiled data
@@ -212,7 +209,9 @@ class SFNTWriter(object):
 		self.tableOrder = []
 	
 	def __setitem__(self, tag, data):
-		"""Write raw table data to disk."""
+		""" Write raw table data to disk -- except for WOFF2, in which data is written
+		to disk only at the end, after all tables have been defined.
+		"""
 		if tag in self.tables:
 			raise TTLibError("cannot rewrite '%s' table: length does not match directory entry" % tag)
 
@@ -221,7 +220,6 @@ class SFNTWriter(object):
 
 		if tag == 'head':
 			entry.checkSum = calcChecksum(data[:8] + b'\0\0\0\0' + data[12:])
-			self.indexFormat, = struct.unpack(">H", data[50:52])
 			self.headTable = data
 			entry.uncompressed = True
 		else:
@@ -231,20 +229,17 @@ class SFNTWriter(object):
 			entry.origOffset = self.origNextTableOffset
 
 		if self.flavor == "woff2":
-			# check if tag is present in Known Tags table, otherwise set flags to 63
 			entry.flags = 63
 			for i in range(len(woff2KnownTags)):
 				if entry.tag == woff2KnownTags[i]:
 					entry.flags = i
-			# only glyf and loca tables needs to be transformed
-			entry.transformed = False
-			if tag in woff2TransformedTableTags:
-				entry.transformed = True
-			if tag == 'maxp':
-				self.maxpNumGlyphs, = struct.unpack(">H", data[4:6])
 			entry.origLength = len(data)
-			# table data is written to disk at the end
 			entry.data = data
+			# get head's indexToLocFormat and maxp's numGlyphs for glyf and loca transform
+			if tag == 'head':
+				self.indexFormat, = struct.unpack(">H", data[50:52])
+			elif tag == 'maxp':
+				self.maxpNumGlyphs, = struct.unpack(">H", data[4:6])
 		else:
 			entry.offset = self.nextTableOffset
 			entry.saveData(self.file, data)
@@ -669,20 +664,11 @@ class WOFF2DirectoryEntry(DirectoryEntry):
 			raise TTLibError('bits 6-7 are reserved and must be 0')
 		# UIntBase128 value specifying the table's length in an uncompressed font
 		self.origLength, data = unpackBase128(data)
-		self.transformed = False
 		self.length = self.origLength
 		if self.tag in woff2TransformedTableTags:
-			# only glyf and loca are subject to transformation
-			self.transformed = True
 			# Optional UIntBase128 specifying the length of the 'transformed' table.
 			# For simplicity, the 'transformLength' is called 'length' here.
 			self.length, data = unpackBase128(data)
-		# transformed loca is reconstructed as part of the glyf decoding process
-		# and its length must always be 0
-		if self.tag == 'loca' and self.length != 0:
-			raise TTLibError(
-				"incorrect size of transformed 'loca' table: expected 0, received %d bytes"
-				% (len(self.length)))
 		# return left over data
 		return data
 
@@ -691,7 +677,7 @@ class WOFF2DirectoryEntry(DirectoryEntry):
 		if (self.flags & 0x3f) == 0x3f:
 			data += struct.pack('>L', self.tag)
 		data += packBase128(self.origLength)
-		if self.transformed:
+		if self.tag in woff2TransformedTableTags:
 			data += packBase128(self.length)
 		return data
 
