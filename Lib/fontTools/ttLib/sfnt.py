@@ -229,7 +229,7 @@ class SFNTWriter(object):
 			entry.origOffset = self.origNextTableOffset
 
 		if self.flavor == "woff2":
-			entry.flags = 63
+			entry.flags = 0x3F
 			for i in range(len(woff2KnownTags)):
 				if entry.tag == woff2KnownTags[i]:
 					entry.flags = i
