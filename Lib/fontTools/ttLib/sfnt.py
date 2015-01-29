@@ -199,6 +199,7 @@ class SFNTWriter(object):
 			# make temporary buffer for storing raw or transformed table data before compression
 			self.transformBuffer = StringIO()
 			self.nextTableOffset = 0
+			self.tempFont = None
 		else:
 			self.nextTableOffset = self.directorySize + numTables * self.DirectoryEntry.formatSize
 			# clear out directory area
@@ -303,9 +304,32 @@ class SFNTWriter(object):
 			else:
 				self.signature = b"wOF2"
 
-				# for each table, save the data to transformBuffer
 				for tag, entry in tables:
 					data = entry.data
+					if tag == "loca":
+						data = b""
+					elif tag == "glyf":
+						if self.tempFont is None:
+							from fontTools.ttLib import TTFont
+							# initialise temporary font to store tables required for glyf transform
+							self.tempFont = TTFont(sfntVersion=self.sfntVersion, flavor=self.flavor,
+									recalcBBoxes=False)
+							self.tempFont['maxp'] = getTableClass('maxp')()
+							self.tempFont['maxp'].numGlyphs = self.maxpNumGlyphs
+							self.tempFont['head'] = getTableClass('head')()
+							self.tempFont['head'].indexToLocFormat = self.indexFormat
+							dummyGlyfOrder = ["glyph%d" % i for i in range(self.maxpNumGlyphs)]
+							self.tempFont.setGlyphOrder(dummyGlyfOrder)
+							self.tempFont.lazy = False
+
+						locaData = self.tables['loca'].data
+						locaTable = self.tempFont['loca'] = getTableClass('loca')()
+						locaTable.decompile(locaData, self.tempFont)
+						glyfTable = self.tempFont['glyf'] = WOFF2Glyf()
+						glyfTable.decompile(data, self.tempFont)
+						print(glyfTable.__dict__)
+						raise TTLibError('stop')
+
 					entry.offset = self.nextTableOffset
 					entry.saveData(self.transformBuffer, data)
 					self.nextTableOffset += entry.length
@@ -791,27 +815,15 @@ class WOFF2Glyf(getTableClass('glyf')):
 			glyph = WOFF2Glyph(i, self)
 			self.glyphs[glyphName] = glyph
 
-	def decompile(self, data, loca, lazy=False):
-		last = int(loca[0])
-		self.glyphs = {}
-		self.glyphOrder = glyphOrder = []
-		for i in range(0, len(loca)-1):
-			glyphName = 'glyph%s' % i
-			glyphOrder.append(glyphName)
-			next = int(loca[i+1])
-			glyphdata = data[last:next]
-			if len(glyphdata) != (next - last):
-				raise TTLibError("not enough 'glyf' table data")
-			glyph = getTableModule('glyf').Glyph(glyphdata)
-			self.glyphs[glyphName] = glyph
-			last = next
-		if len(data) - next >= 4:
-			raise TTLibError(
-				"too much 'glyf' table data: expected %d, received %d bytes" %
-					(next, len(data)))
-		if lazy is False:
-			for glyph in self.glyphs.values():
-				glyph.expand(self)
+	def transform(self, ttFont):
+		if not hasattr(self, "glyphOrder"):
+			self.glyphOrder = ttFont.getGlyphOrder()
+		recalcBBoxes = ttFont.recalcBBoxes
+		for index, glyphName in enumerate(self.glyphOrder):
+			glyph = self.glyphs[glyphName]
+
+			raise NotImplementedError
+
 
 class WOFF2Glyph(getTableModule('glyf').Glyph):
 
