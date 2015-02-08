@@ -127,7 +127,6 @@ class TTFont(object):
 		immediately.  The default is lazy=None which is somewhere in between.
 		"""
 		
-		from fontTools.ttLib import sfnt
 		self.verbose = verbose
 		self.quiet = quiet
 		self.lazy = lazy
@@ -165,7 +164,9 @@ class TTFont(object):
 				file = open(file, "rb")
 		else:
 			pass # assume "file" is a readable file object
-		self.reader = sfnt.SFNTReader(file, checkChecksums, fontNumber=fontNumber)
+		flavor = getFlavor(file)
+		readerClass = getReaderClass(flavor)
+		self.reader = readerClass(file, checkChecksums, fontNumber=fontNumber)
 		self.sfntVersion = self.reader.sfntVersion
 		self.flavor = self.reader.flavor
 		self.flavorData = self.reader.flavorData
@@ -183,7 +184,6 @@ class TTFont(object):
 		On the Mac, if makeSuitcase is true, a suitcase (resource fork)
 		file will we made instead of a flat .ttf file. 
 		"""
-		from fontTools.ttLib import sfnt
 		if not hasattr(file, "write"):
 			closeStream = 1
 			if os.name == "mac" and makeSuitcase:
@@ -210,7 +210,8 @@ class TTFont(object):
 			tmp = tempfile.TemporaryFile(prefix="ttx-fonttools")
 		else:
 			tmp = file
-		writer = sfnt.SFNTWriter(tmp, numTables, self.sfntVersion, self.flavor, self.flavorData)
+		writerClass = getWriterClass(self.flavor)
+		writer = writerClass(tmp, numTables, self.sfntVersion, self.flavor, self.flavorData)
 		
 		if self.flavor == "woff2":
 			# normalise bounding boxes when compiling WOFF2 glyf table, so that simple glyph
@@ -801,6 +802,41 @@ def getTableClass(tag):
 	return tableClass
 
 
+def getFlavor(file):
+	pos = file.tell()
+	file.seek(0)
+	sfntVersion = Tag(file.read(4))
+	file.seek(pos)
+	flavor = None
+	if sfntVersion == "wOFF":
+		flavor = "woff"
+	elif sfntVersion == "wOF2":
+		flavor = "woff2"
+	return flavor
+
+
+def getReaderClass(flavor):
+	if flavor is None or flavor == "woff":
+		from fontTools.ttLib.sfnt import SFNTReader
+		return SFNTReader
+	elif flavor == "woff2":
+		from fontTools.ttLib.woff2 import WOFF2Reader
+		return WOFF2Reader
+	else:
+		raise TTLibError("Unknown flavor '%s'" % flavor)
+
+
+def getWriterClass(flavor):
+	if flavor is None or flavor == "woff":
+		from fontTools.ttLib.sfnt import SFNTWriter
+		return SFNTWriter
+	elif flavor == "woff2":
+		from fontTools.ttLib.woff2 import WOFF2Writer
+		return WOFF2Writer
+	else:
+		raise TTLibError("Unknown flavor '%s'" % flavor)
+
+
 def getClassTag(klass):
 	"""Fetch the table tag for a class object."""
 	name = klass.__name__
@@ -944,9 +980,11 @@ def reorderFontTables(inFile, outFile, tableOrder=None, checkChecksums=False):
 	"""Rewrite a font file, ordering the tables as recommended by the
 	OpenType specification 1.4.
 	"""
-	from fontTools.ttLib.sfnt import SFNTReader, SFNTWriter
-	reader = SFNTReader(inFile, checkChecksums=checkChecksums)
-	writer = SFNTWriter(outFile, len(reader.tables), reader.sfntVersion, reader.flavor, reader.flavorData)
+	flavor = getFlavor(inFile)
+	readerClass = getReaderClass(flavor)
+	writerClass = getWriterClass(flavor)
+	reader = readerClass(inFile, checkChecksums=checkChecksums)
+	writer = writerClass(outFile, len(reader.tables), reader.sfntVersion, reader.flavor, reader.flavorData)
 	tables = list(reader.keys())
 	for tag in sortedTagList(tables, tableOrder):
 		writer[tag] = reader[tag]
