@@ -827,7 +827,7 @@ def newSFNTWriter(file, numTables, sfntVersion="\000\001\000\000",
 		          flavor=None, flavorData=None):
 	if flavor == "woff2":
 		from fontTools.ttLib.woff2 import WOFF2Writer
-		return WOFF2Writer(file, numTables, sfntVersion, flavor, flavorData)
+		return WOFF2Writer(file, numTables, sfntVersion, flavorData)
 	else:
 		from fontTools.ttLib.sfnt import SFNTWriter
 		return SFNTWriter(file, numTables, sfntVersion, flavor, flavorData)
