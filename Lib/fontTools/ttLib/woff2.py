@@ -5,8 +5,8 @@ import struct
 import sys
 import array
 import brotli
-from fontTools.ttLib import TTFont, TTLibError, getTableModule, getTableClass
-from fontTools.ttLib.sfnt import SFNTReader, SFNTWriter, DirectoryEntry, WOFFFlavorData
+from fontTools.ttLib import TTFont, TTLibError, getTableModule, getTableClass, getSearchRange
+from fontTools.ttLib.sfnt import SFNTReader, SFNTWriter, DirectoryEntry, WOFFFlavorData, sfntDirectoryFormat, sfntDirectorySize, SFNTDirectoryEntry, sfntDirectoryEntrySize, calcChecksum
 from fontTools.ttLib.tables import ttProgram
 
 
@@ -70,11 +70,11 @@ class WOFF2Reader(SFNTReader):
 			# transformed loca is reconstructed as part of the glyf decoding process
 			# and its length must always be 0
 			assert len(rawData) == 0, "expected 0, received %d bytes" % len(rawData)
-			if 'glyf' not in self.glyfDecoder:
+			if not self.glyfDecoder.locaData:
 				# make sure glyf is loaded first
 				self['glyf']
 			# get loca data from reconstructed glyf
-			data = self.glyfDecoder.getLocaData()
+			data = self.glyfDecoder.locaData
 
 		if len(data) != entry.origLength:
 			raise TTLibError(
@@ -85,8 +85,221 @@ class WOFF2Reader(SFNTReader):
 
 
 class WOFF2Writer(SFNTWriter):
-	pass
 
+	flavor = "woff2"
+
+	def __init__(self, file, numTables, sfntVersion="\000\001\000\000",
+			     flavorData=None):
+		self.file = file
+		self.numTables = numTables
+		self.sfntVersion = Tag(sfntVersion)
+		self.flavorData = flavorData
+
+		self.directoryFormat = woff2DirectoryFormat
+		self.directorySize = woff2DirectorySize
+		self.DirectoryEntry = WOFF2DirectoryEntry
+
+		self.signature = "wOF2"
+
+		# calculate SFNT offsets for checksum calculation purposes
+		self.origNextTableOffset = sfntDirectorySize + numTables * sfntDirectoryEntrySize
+
+		# make temporary buffer for storing raw or transformed table data before compression
+		self.transformBuffer = StringIO()
+		self.nextTableOffset = 0
+		self.glyfEncoder = WOFF2Glyf()
+
+		self.tables = {}
+		self.tableOrder = []
+
+	def __setitem__(self, tag, data):
+		""" WOFF2 raw table data are written to disk only at the end, after all tags
+		have been defined.
+		"""
+		if tag in self.tables:
+			raise TTLibError("cannot rewrite '%s' table: length does not match directory entry" % tag)
+
+		entry = self.DirectoryEntry()
+		entry.tag = Tag(tag)
+
+		if tag == 'head':
+			entry.checkSum = calcChecksum(data[:8] + b'\0\0\0\0' + data[12:])
+			self.headTable = data
+		else:
+			entry.checkSum = calcChecksum(data)
+
+		entry.origOffset = self.origNextTableOffset
+
+		entry.flags = 0x3F
+		for i in range(len(woff2KnownTags)):
+			if entry.tag == woff2KnownTags[i]:
+				entry.flags = i
+		entry.origLength = len(data)
+		entry.data = data
+
+		# get head's indexToLocFormat and maxp's numGlyphs for glyf transform
+		if tag == 'head':
+			self.glyfEncoder.indexFormat, = struct.unpack(">H", data[50:52])
+		elif tag == 'maxp':
+			self.glyfEncoder.numGlyphs, = struct.unpack(">H", data[4:6])
+		elif tag == 'loca':
+			self.glyfEncoder.locaData = data
+
+		self.origNextTableOffset += (entry.origLength + 3) & ~3
+
+		self.tables[tag] = entry
+		self.tableOrder.append(tag)
+
+	def close(self):
+		""" All tags must have been defined. Now write the table data and directory.
+		"""
+		if 0:
+			# According to WOFF2 specs, the directory must reflect the 'physical order'
+			# in which the tables have been encoded.
+			tables = sorted(self.tables.items(), key=lambda x: self.tableOrder.index(x[0]))
+		else:
+			# However, for compatibility with current woff2 implementations (e.g. OTS),
+			# we must sort both the directory and table data in ascending order by tag.
+			# See https://github.com/google/woff2/pull/3
+			tables = sorted(self.tables.items())
+			# we also need to 'normalise' the original table offsets used for checksum
+			# calculation
+			offset = sfntDirectorySize + sfntDirectoryEntrySize * len(tables)
+			for tag, entry in tables:
+				entry.origOffset = offset
+				offset = offset + ((entry.origLength + 3) & ~3)
+
+		if len(tables) != self.numTables:
+			raise TTLibError("wrong number of tables; expected %d, found %d" % (self.numTables, len(tables)))
+
+		self.reserved = 0
+
+		# size of uncompressed font
+		self.totalSfntSize = sfntDirectorySize
+		self.totalSfntSize += sfntDirectoryEntrySize * len(tables)
+		for tag, entry in tables:
+			self.totalSfntSize += (entry.origLength + 3) & ~3
+
+		self.signature = b"wOF2"
+
+		for tag, entry in tables:
+			data = entry.data
+			if tag == "loca":
+				data = b""
+			elif tag == "glyf":
+				data = self.glyfEncoder.encodeData(data)
+			entry.offset = self.nextTableOffset
+			entry.saveData(self.transformBuffer, data)
+			self.nextTableOffset += entry.length
+
+		# start calculating total size of WOFF2 font
+		offset = woff2DirectorySize
+		for tag, entry in tables:
+			offset += len(entry.toString())
+
+		# update head's checkSumAdjustment
+		self.writeMasterChecksum(b"")
+
+		# compress font data
+		self.transformBuffer.seek(0)
+		uncompressedData = self.transformBuffer.read()
+		import brotli
+		compressedData = brotli.compress(uncompressedData, brotli.MODE_FONT)
+		self.totalCompressedSize = len(compressedData)
+
+		offset += self.totalCompressedSize
+		offset = (offset + 3) & ~3
+
+		# calculate offsets and lengths for any metadata and/or private data
+		compressedMetaData = privData = b""
+		data = self.flavorData if self.flavorData else WOFFFlavorData()
+		if data.majorVersion is not None and data.minorVersion is not None:
+			self.majorVersion = data.majorVersion
+			self.minorVersion = data.minorVersion
+		else:
+			if hasattr(self, 'headTable'):
+				self.majorVersion, self.minorVersion = struct.unpack(">HH", self.headTable[4:8])
+			else:
+				self.majorVersion = self.minorVersion = 0
+		if data.metaData:
+			self.metaOrigLength = len(data.metaData)
+			self.metaOffset = offset
+			# compress metadata using brotli
+			compressedMetaData = brotli.compress(data.metaData)
+			self.metaLength = len(compressedMetaData)
+			offset += self.metaLength
+		else:
+			self.metaOffset = self.metaLength = self.metaOrigLength = 0
+		if data.privData:
+			privData = data.privData
+			# make sure private data is padded to 4-byte boundary
+			offset = (offset + 3) & ~3
+			self.privOffset = offset
+			self.privLength = len(privData)
+			offset += self.privLength
+		else:
+			self.privOffset = self.privLength = 0
+
+		# total size of WOFF/WOFF2 font, including any metadata or private data
+		self.length = offset
+
+		directory = sstruct.pack(self.directoryFormat, self)
+
+		self.file.seek(self.directorySize)
+		for tag, entry in tables:
+			directory = directory + entry.toString()
+		self.file.seek(0)
+		self.file.write(directory)
+
+		# finally write WOFF2 compressed font data to disk
+		self.file.write(compressedData)
+		write4BytePadding(self.file)
+
+		# write any WOFF/WOFF2 metadata and/or private data
+		if compressedMetaData:
+			self.file.seek(self.metaOffset)
+			assert self.file.tell() == self.metaOffset
+			self.file.write(compressedMetaData)
+			if privData:
+				write4BytePadding(self.file)
+		if privData:
+			self.file.seek(self.privOffset)
+			assert self.file.tell() == self.privOffset
+			self.file.write(privData)
+
+	def _calcMasterChecksum(self, directory):
+		# calculate checkSumAdjustment
+		tags = list(self.tables.keys())
+		checksums = []
+		for i in range(len(tags)):
+			checksums.append(self.tables[tags[i]].checkSum)
+
+		# Create a SFNT directory for checksum calculation purposes
+		self.searchRange, self.entrySelector, self.rangeShift = getSearchRange(self.numTables, 16)
+		directory = sstruct.pack(sfntDirectoryFormat, self)
+		tables = sorted(self.tables.items())
+		for tag, entry in tables:
+			sfntEntry = SFNTDirectoryEntry()
+			sfntEntry.tag = entry.tag
+			sfntEntry.checkSum = entry.checkSum
+			sfntEntry.offset = entry.origOffset
+			sfntEntry.length = entry.origLength
+			directory = directory + sfntEntry.toString()
+
+		directory_end = sfntDirectorySize + len(self.tables) * sfntDirectoryEntrySize
+		assert directory_end == len(directory)
+
+		checksums.append(calcChecksum(directory))
+		checksum = sum(checksums) & 0xffffffff
+		# BiboAfba!
+		checksumadjustment = (0xB1B0AFBA - checksum) & 0xffffffff
+		return checksumadjustment
+
+	def writeMasterChecksum(self, directory):
+		checksumadjustment = self._calcMasterChecksum(directory)
+		# write the checksum to the file
+		self.transformBuffer.seek(self.tables['head'].offset + 8)
+		self.transformBuffer.write(struct.pack(">L", checksumadjustment))
 
 # -- woff2 directory helpers and cruft
 
@@ -205,12 +418,16 @@ class WOFF2DirectoryEntry(DirectoryEntry):
 
 class WOFF2Glyf(object):
 
-	def __init__(self, tempFont=None):
-		if tempFont is None:
+	def __init__(self, ttFont=None, indexFormat=None, numGlyphs=None, locaData=None):
+		self.tempFont = ttFont
+		if not self.tempFont:
 			self.tempFont = TTFont(flavor="woff2", recalcBBoxes=False)
-			self.tempFont['maxp'] = getTableClass('maxp')()
 			self.tempFont['head'] = getTableClass('head')()
+			self.tempFont['maxp'] = getTableClass('maxp')()
 			self.tempFont['loca'] = getTableClass('loca')()
+		self.indexFormat = indexFormat
+		self.numGlyphs = numGlyphs
+		self.locaData = locaData
 
 	def decodeData(self, data):
 		inputDataSize = len(data)
@@ -297,8 +514,21 @@ class WOFF2Glyf(object):
 			else:
 				self.recalcBBox(glyph)
 
-		# compile glyf table (and update tempFont's loca)
+		# compile glyf table
 		data = glyfTable.compile(self.tempFont)
+
+		# compile loca table
+		locaTable = self.tempFont['loca']
+		locaData = locaTable.compile(self.tempFont)
+		origIndexFormat = self.indexFormat
+		currIndexFormat = self.tempFont['head'].indexToLocFormat
+		if currIndexFormat != origIndexFormat:
+			raise TTLibError(
+				"reconstructed 'loca' table has wrong index format: expected %d, found %d"
+				% (origIndexFormat, currIndexFormat))
+		self.locaData = locaData
+
+		# return compiled glyf data
 		return data
 
 	def getNumberOfContours(self, glyphID):
@@ -424,15 +654,74 @@ class WOFF2Glyf(object):
 		flags = array.array("B", onCurves)
 		return flags, coordinates
 
-	def getLocaData(self):
-		table = self.tempFont['loca']
-		data = table.compile(self.tempFont)
-		origIndexFormat = self.indexFormat
-		currIndexFormat = self.tempFont['head'].indexToLocFormat
-		if currIndexFormat != origIndexFormat:
-			raise TTLibError(
-				"reconstructed 'loca' table has wrong index format: expected %d, found %d"
-				% (origIndexFormat, currIndexFormat))
+	def encodeData(self, data):
+
+		# decompile loca table using indexFormat and numGlyphs
+		self.tempFont['head'].indexToLocFormat = self.indexFormat
+		self.tempFont['maxp'].numGlyphs = self.numGlyphs
+		self.tempFont['loca'].decompile(self.locaData, self.tempFont)
+
+		# build dummy glyph order
+		glyphOrder = ["glyph%d" % i for i in range(self.numGlyphs)]
+		self.tempFont.setGlyphOrder(glyphOrder)
+		self.tempFont.lazy = False
+
+		# decompile glyf table
+		self.tempFont['glyf'] = glyfTable = getTableClass('glyf')()
+		glyfTable.decompile(data, self.tempFont)
+
+		# initialise sub-streams
+		self.nContourStream = array.array("h", [0]*self.numGlyphs)
+		self.nPointsStream = ""
+		self.flagStream = ""
+		self.glyphStream = ""
+		self.compositeStream = ""
+		self.bboxStream = ""
+		self.instructionStream = ""
+		bboxBitmapSize = ((self.numGlyphs + 31) >> 5) << 2
+		self.bboxBitmap = array.array('B', [0]*bboxBitmapSize)
+
+		raise NotImplementedError
+
+		# encode each glyph in glyf table
+		for glyphID, glyphName in enumerate(glyfTable.glyphOrder):
+			glyph = glyfTable.glyphs[glyphName]
+			storeBBox = False
+			if glyph.numberOfContours == 0:
+				continue
+			elif glyph.isComposite():
+				self.encodeComponents(glyph)
+				storeBBox = True
+			else:
+				self.encodeCoordinates(glyph)
+			self.nContourStream[glyphID] = glyph.numberOfContours
+			if storeBBox:
+				self.encodeBBox(glyph)
+
+		# pack nContourStream bytes
+		if sys.byteorder != "big":
+			self.nContourStream.byteswap()
+		self.nContourStream = self.nContourStream.tostring()
+
+		# combine bboxBitmap with bboxStream
+		self.bboxBitmap = self.bboxBitmap.tostring()
+		self.bboxStream = self.bboxBitmap + self.bboxStream
+
+		# pack transformed glyf header
+		self.nContourStreamSize = len(self.nContourStream)
+		self.nPointsStreamSize = len(self.nPointsStream)
+		self.flagStreamSize = len(self.flagStream)
+		self.glyphStreamSize = len(self.glyphStream)
+		self.compositeStreamSize = len(self.compositeStream)
+		self.bboxStreamSize = len(self.bboxStream)
+		self.instructionStreamSize = len(self.instructionStream)
+		data = sstruct.pack(woffTransformedGlyfHeaderFormat, self)
+
+		# append sub-streams
+		data += self.nContourStream + self.nPointsStream + self.flagStream + \
+			self.glyphStream + self.compositeStream + self.bboxStream + \
+			self.instructionStream
+
 		return data
 
 	def __contains__(self, tag):
