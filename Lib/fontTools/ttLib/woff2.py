@@ -48,7 +48,7 @@ class WOFF2Reader(SFNTReader):
 				'unexpected size for decompressed font data: expected %d, found %d'
 				% (totalUncompressedSize, len(decompressedData)))
 		self.transformBuffer = StringIO(decompressedData)
-		self.glyfDecoder = WOFF2Glyf()
+		self.glyfDecoder = WOFF2GlyfDecoder()
 
 		# Load flavor data if any
 		self.flavorData = WOFFFlavorData(self)
@@ -64,17 +64,14 @@ class WOFF2Reader(SFNTReader):
 			return entry.data
 
 		if tag == 'glyf':
-			# reconstruct both glyf and loca tables
+			# reconstruct both glyf and loca, and store the latter in glyfDecoder
 			data = self.glyfDecoder.decodeData(rawData)
 		elif tag == 'loca':
-			# transformed loca is reconstructed as part of the glyf decoding process
-			# and its length must always be 0
 			assert len(rawData) == 0, "expected 0, received %d bytes" % len(rawData)
-			if not self.glyfDecoder.locaData:
+			if 'glyf' not in self.glyfDecoder:
 				# make sure glyf is loaded first
 				self['glyf']
-			# get loca data from reconstructed glyf
-			data = self.glyfDecoder.locaData
+			data = self.glyfDecoder.getLocaData()
 
 		if len(data) != entry.origLength:
 			raise TTLibError(
@@ -89,7 +86,7 @@ class WOFF2Writer(SFNTWriter):
 	flavor = "woff2"
 
 	def __init__(self, file, numTables, sfntVersion="\000\001\000\000",
-			     flavorData=None):
+				 flavorData=None):
 		self.file = file
 		self.numTables = numTables
 		self.sfntVersion = Tag(sfntVersion)
@@ -107,7 +104,7 @@ class WOFF2Writer(SFNTWriter):
 		# make temporary buffer for storing raw or transformed table data before compression
 		self.transformBuffer = StringIO()
 		self.nextTableOffset = 0
-		self.glyfEncoder = WOFF2Glyf()
+		self.glyfEncoder = WOFF2GlyfEncoder()
 
 		self.tables = {}
 		self.tableOrder = []
@@ -416,28 +413,21 @@ class WOFF2DirectoryEntry(DirectoryEntry):
 		return data
 
 
-class WOFF2Glyf(object):
+class WOFF2GlyfDecoder(object):
 
-	def __init__(self, ttFont=None, indexFormat=None, numGlyphs=None, locaData=None):
-		self.tempFont = ttFont
-		if not self.tempFont:
-			self.tempFont = TTFont(flavor="woff2", recalcBBoxes=False)
-			self.tempFont['head'] = getTableClass('head')()
-			self.tempFont['maxp'] = getTableClass('maxp')()
-			self.tempFont['loca'] = getTableClass('loca')()
-		self.indexFormat = indexFormat
-		self.numGlyphs = numGlyphs
-		self.locaData = locaData
+	def __init__(self):
+		self.ttFont = TTFont(flavor="woff2", recalcBBoxes=False)
+		self.ttFont['head'] = getTableClass('head')()
+		self.ttFont['maxp'] = getTableClass('maxp')()
+		self.ttFont['loca'] = getTableClass('loca')()
 
 	def decodeData(self, data):
 		inputDataSize = len(data)
 
-		# unpack transformed glyf table header
 		dummy, data = sstruct.unpack2(woff2GlyfTableFormat, data, self)
 		numGlyphs = self.numGlyphs
 		substreamOffset = woff2GlyfTableFormatSize
 
-		# slice stream data into seven individual sub-streams
 		self.nContourStream = data[:self.nContourStreamSize]
 		data = data[self.nContourStreamSize:]
 		substreamOffset += self.nContourStreamSize
@@ -466,73 +456,53 @@ class WOFF2Glyf(object):
 		data = data[self.instructionStreamSize:]
 		substreamOffset += self.instructionStreamSize
 
-		# check all input data was read and no more is left
 		if substreamOffset != inputDataSize:
 			raise TTLibError(
 				"incorrect size of transformed 'glyf' table: expected %d, received %d bytes"
 				% (substreamOffset, inputDataSize))
 
-		# extract bboxBitmap from bboxStream
 		bboxBitmapSize = ((numGlyphs + 31) >> 5) << 2
 		bboxBitmap = combinedBboxStream[:bboxBitmapSize]
 		self.bboxBitmap = array.array('B', bboxBitmap)
 		self.bboxStream = combinedBboxStream[bboxBitmapSize:]
 
-		# convert nContourStream to a numGlyphs-long Int16 array
 		self.nContourStream = array.array("h", self.nContourStream)
 		if sys.byteorder != "big":
 			self.nContourStream.byteswap()
 		assert len(self.nContourStream) == numGlyphs
 
-		# create empty glyf table
-		self.tempFont['glyf'] = glyfTable = getTableClass('glyf')()
+		self.ttFont['glyf'] = glyfTable = getTableClass('glyf')()
 
-		# build dummy glyphOrder
 		glyfTable.glyphOrder = glyphOrder = []
 		for glyphID in range(numGlyphs):
 			glyphName = "glyph%d" % glyphID
 			glyphOrder.append(glyphName)
-		self.tempFont.setGlyphOrder(glyphOrder)
+		self.ttFont.setGlyphOrder(glyphOrder)
 
-		# decode each glyph and populate glyf table
 		glyfTable.glyphs = {}
 		for glyphID, glyphName in enumerate(glyphOrder):
-			glyph = getTableModule('glyf').Glyph()
+			glyph = self.decodeGlyph(glyphID)
 			glyfTable.glyphs[glyphName] = glyph
-			glyph.numberOfContours = self.getNumberOfContours(glyphID)
-			if glyph.numberOfContours == 0:
-				continue
-			if glyph.isComposite():
-				self.decodeComponents(glyph)
-			elif glyph.numberOfContours > 0:
-				self.decodeCoordinates(glyph)
-			haveBBox = self.haveBBox(glyphID)
-			if glyph.isComposite() and not haveBBox:
-				raise TTLibError('no bbox values for composite glyph %d' % glyphID)
-			if haveBBox:
-				self.decodeBBox(glyph)
-			else:
-				self.recalcBBox(glyph)
 
-		# compile glyf table
-		data = glyfTable.compile(self.tempFont)
-
-		# compile loca table
-		locaTable = self.tempFont['loca']
-		locaData = locaTable.compile(self.tempFont)
-		origIndexFormat = self.indexFormat
-		currIndexFormat = self.tempFont['head'].indexToLocFormat
-		if currIndexFormat != origIndexFormat:
-			raise TTLibError(
-				"reconstructed 'loca' table has wrong index format: expected %d, found %d"
-				% (origIndexFormat, currIndexFormat))
-		self.locaData = locaData
-
-		# return compiled glyf data
+		data = glyfTable.compile(self.ttFont)
 		return data
 
-	def getNumberOfContours(self, glyphID):
-		return self.nContourStream[glyphID]
+	def decodeGlyph(self, glyphID):
+		glyph = getTableModule('glyf').Glyph()
+		glyph.numberOfContours = self.nContourStream[glyphID]
+		if glyph.numberOfContours == 0:
+			return glyph
+		elif glyph.isComposite():
+			self.decodeComponents(glyph)
+			if not self.haveBBox(glyphID):
+				raise TTLibError('no bbox values for composite glyph %d' % glyphID)
+		else:
+			self.decodeCoordinates(glyph)
+		if self.haveBBox(glyphID):
+			self.decodeBBox(glyph)
+		else:
+			self.recalcBBox(glyph)
+		return glyph
 
 	def decodeComponents(self, glyph):
 		data = self.compositeStream
@@ -541,7 +511,7 @@ class WOFF2Glyf(object):
 		haveInstructions = 0
 		while more:
 			component = getTableModule('glyf').GlyphComponent()
-			more, haveInstr, data = component.decompile(data, self.tempFont['glyf'])
+			more, haveInstr, data = component.decompile(data, self.ttFont['glyf'])
 			haveInstructions = haveInstructions | haveInstr
 			glyph.components.append(component)
 		self.compositeStream = data
@@ -549,16 +519,17 @@ class WOFF2Glyf(object):
 			self.decodeInstructions(glyph)
 
 	def decodeCoordinates(self, glyph):
-		nPointsStream = self.nPointsStream
+		data = self.nPointsStream
 		endPtsOfContours = []
 		endPoint = -1
 		for i in range(glyph.numberOfContours):
-			ptsOfContour, nPointsStream = unpack255UShort(nPointsStream)
+			ptsOfContour, data = unpack255UShort(data)
 			endPoint += ptsOfContour
 			endPtsOfContours.append(endPoint)
 		glyph.endPtsOfContours = endPtsOfContours
+		self.nPointsStream = data
+
 		nPoints = endPoint + 1
-		self.nPointsStream = nPointsStream
 		glyph.flags, glyph.coordinates = self.decodeTriplets(nPoints)
 		self.decodeInstructions(glyph)
 
@@ -578,7 +549,7 @@ class WOFF2Glyf(object):
 		dummy, self.bboxStream = sstruct.unpack2(bboxFormat, self.bboxStream, glyph)
 
 	def recalcBBox(self, glyph):
-		glyph.recalcBounds(self.tempFont['glyf'])
+		glyph.recalcBounds(self.ttFont['glyf'])
 
 	def decodeTriplets(self, nPoints):
 
@@ -586,16 +557,14 @@ class WOFF2Glyf(object):
 			assert 0 <= baseval and baseval < 65536, 'integer overflow'
 			return baseval if flag & 1 else -baseval
 
-		flagStream = self.flagStream
 		flagSize = nPoints
-		if flagSize > len(flagStream):
+		if flagSize > len(self.flagStream):
 			raise TTLibError("not enough 'flagStream' data")
-		flagsData = flagStream[:flagSize]
-		self.flagStream = flagStream[flagSize:]
+		flagsData = self.flagStream[:flagSize]
+		self.flagStream = self.flagStream[flagSize:]
 		flags = array.array('B', flagsData)
 
-		glyphStream = self.glyphStream
-		triplets = array.array('B', glyphStream)
+		triplets = array.array('B', self.glyphStream)
 		nTriplets = len(triplets)
 		assert nPoints <= nTriplets
 
@@ -649,65 +618,67 @@ class WOFF2Glyf(object):
 			coordinates[i] = (x, y)
 			onCurves.append(int(onCurve))
 		bytesConsumed = tripletIndex
-		self.glyphStream = glyphStream[bytesConsumed:]
+		self.glyphStream = self.glyphStream[bytesConsumed:]
 
 		flags = array.array("B", onCurves)
 		return flags, coordinates
 
+	def getLocaData(self):
+		locaTable = self.ttFont['loca']
+		locaData = locaTable.compile(self.ttFont)
+		origIndexFormat = self.indexFormat
+		currIndexFormat = self.ttFont['head'].indexToLocFormat
+		if currIndexFormat != origIndexFormat:
+			raise TTLibError(
+				"reconstructed 'loca' table has wrong index format: expected %d, found %d"
+				% (origIndexFormat, currIndexFormat))
+		return locaData
+
+	def __contains__(self, tag):
+		return tag in self.ttFont
+
+
+class WOFF2GlyfEncoder(object):
+
+	def __init__(self):
+		self.ttFont = TTFont(flavor="woff2", recalcBBoxes=False)
+		self.ttFont['head'] = getTableClass('head')()
+		self.ttFont['maxp'] = getTableClass('maxp')()
+		self.ttFont['loca'] = getTableClass('loca')()
+
 	def encodeData(self, data):
+		assert hasattr(self, 'indexFormat')
+		assert hasattr(self, 'numGlyphs')
+		assert hasattr(self, 'locaData')
+		self.ttFont['head'].indexToLocFormat = self.indexFormat
+		self.ttFont['maxp'].numGlyphs = self.numGlyphs
+		self.ttFont['loca'].decompile(self.locaData, self.ttFont)
 
-		# decompile loca table using indexFormat and numGlyphs
-		self.tempFont['head'].indexToLocFormat = self.indexFormat
-		self.tempFont['maxp'].numGlyphs = self.numGlyphs
-		self.tempFont['loca'].decompile(self.locaData, self.tempFont)
-
-		# build dummy glyph order
 		glyphOrder = ["glyph%d" % i for i in range(self.numGlyphs)]
-		self.tempFont.setGlyphOrder(glyphOrder)
-		self.tempFont.lazy = False
+		self.ttFont.setGlyphOrder(glyphOrder)
+		self.ttFont.lazy = False
 
-		# decompile glyf table
-		self.tempFont['glyf'] = glyfTable = getTableClass('glyf')()
-		glyfTable.decompile(data, self.tempFont)
+		self.ttFont['glyf'] = glyfTable = getTableClass('glyf')()
+		glyfTable.decompile(data, self.ttFont)
 
-		# initialise sub-streams
-		self.nContourStream = array.array("h", [0]*self.numGlyphs)
-		self.nPointsStream = ""
-		self.flagStream = ""
-		self.glyphStream = ""
-		self.compositeStream = ""
-		self.bboxStream = ""
-		self.instructionStream = ""
+		self.nContourStream = b""
+		self.nPointsStream = b""
+		self.flagStream = b""
+		self.glyphStream = b""
+		self.compositeStream = b""
+		self.bboxStream = b""
+		self.instructionStream = b""
 		bboxBitmapSize = ((self.numGlyphs + 31) >> 5) << 2
 		self.bboxBitmap = array.array('B', [0]*bboxBitmapSize)
 
-		raise NotImplementedError
-
-		# encode each glyph in glyf table
-		for glyphID, glyphName in enumerate(glyfTable.glyphOrder):
+		for glyphID, glyphName in enumerate(glyphOrder):
 			glyph = glyfTable.glyphs[glyphName]
-			storeBBox = False
-			if glyph.numberOfContours == 0:
-				continue
-			elif glyph.isComposite():
-				self.encodeComponents(glyph)
-				storeBBox = True
-			else:
-				self.encodeCoordinates(glyph)
-			self.nContourStream[glyphID] = glyph.numberOfContours
-			if storeBBox:
-				self.encodeBBox(glyph)
+			self.encodeGlyph(glyphID, glyph)
 
-		# pack nContourStream bytes
-		if sys.byteorder != "big":
-			self.nContourStream.byteswap()
-		self.nContourStream = self.nContourStream.tostring()
+		self.bboxStream = self.bboxBitmap.tostring() + self.bboxStream
 
-		# combine bboxBitmap with bboxStream
-		self.bboxBitmap = self.bboxBitmap.tostring()
-		self.bboxStream = self.bboxBitmap + self.bboxStream
+		self.version = 0
 
-		# pack transformed glyf header
 		self.nContourStreamSize = len(self.nContourStream)
 		self.nPointsStreamSize = len(self.nPointsStream)
 		self.flagStreamSize = len(self.flagStream)
@@ -715,20 +686,98 @@ class WOFF2Glyf(object):
 		self.compositeStreamSize = len(self.compositeStream)
 		self.bboxStreamSize = len(self.bboxStream)
 		self.instructionStreamSize = len(self.instructionStream)
-		data = sstruct.pack(woffTransformedGlyfHeaderFormat, self)
 
-		# append sub-streams
-		data += self.nContourStream + self.nPointsStream + self.flagStream + \
+		rawData = sstruct.pack(woff2GlyfTableFormat, self)
+		rawData += self.nContourStream + self.nPointsStream + self.flagStream + \
 			self.glyphStream + self.compositeStream + self.bboxStream + \
 			self.instructionStream
 
-		return data
+		return rawData
 
-	def __contains__(self, tag):
-		return tag in self.tempFont
+	def encodeGlyph(self, glyphID, glyph):
+		if glyph.isComposite():
+			self.encodeComponents(glyph)
+			self.encodeBBox(glyphID, glyph)
+		elif glyph.numberOfContours > 0:
+			self.encodeCoordinates(glyph)
+		self.nContourStream += struct.pack(">h", glyph.numberOfContours)
 
-	def __getitem__(self, tag):
-		return self.tempFont[tag]
+	def encodeComponents(self, glyph):
+		lastcomponent = len(glyph.components) - 1
+		more = 1
+		haveInstructions = 0
+		for i in range(len(glyph.components)):
+			if i == lastcomponent:
+				haveInstructions = hasattr(glyph, "program")
+				more = 0
+			component = glyph.components[i]
+			self.compositeStream += component.compile(
+				more, haveInstructions, self.ttFont['glyf'])
+		if haveInstructions:
+			self.encodeInstructions(glyph)
+
+	def encodeCoordinates(self, glyph):
+		lastEndPoint = -1
+		for endPoint in glyph.endPtsOfContours:
+			ptsOfContour = endPoint - lastEndPoint
+			self.nPointsStream += pack255UShort(ptsOfContour)
+			lastEndPoint = endPoint
+		self.encodeTriplets(glyph)
+		self.encodeInstructions(glyph)
+
+	def encodeInstructions(self, glyph):
+		instructions = glyph.program.getBytecode()
+		self.glyphStream += pack255UShort(len(instructions))
+		self.instructionStream += instructions
+
+	def encodeBBox(self, glyphID, glyph):
+		self.bboxBitmap[glyphID >> 3] |= 0x80 >> (glyphID & 7)
+		self.bboxStream += sstruct.pack(bboxFormat, glyph)
+
+	def encodeTriplets(self, glyph):
+		assert len(glyph.coordinates) == len(glyph.flags)
+		coordinates = glyph.coordinates.copy()
+		coordinates.absoluteToRelative()
+
+		flags = array.array('B')
+		triplets = array.array('B')
+		for i in range(len(coordinates)):
+			onCurve = glyph.flags[i]
+			x, y = coordinates[i]
+			absX = abs(x)
+			absY = abs(y)
+			onCurveBit = 0 if onCurve else 128
+			xSignBit = 0 if (x < 0) else 1
+			ySignBit = 0 if (y < 0) else 1
+			xySignBits = xSignBit + 2 * ySignBit
+
+			if x == 0 and absY < 1280:
+				flags.append(onCurveBit + ((absY & 0xf00) >> 7) + ySignBit)
+				triplets.append(absY & 0xff)
+			elif y == 0 and absX < 1280:
+				flags.append(onCurveBit + 10 + ((absX & 0xf00) >> 7) + xSignBit)
+				triplets.append(absX & 0xff)
+			elif absX < 65 and absY < 65:
+				flags.append(onCurveBit + 20 + ((absX - 1) & 0x30) + (((absY - 1) & 0x30) >> 2) + xySignBits)
+				triplets.append((((absX - 1) & 0xf) << 4) | ((absY - 1) & 0xf))
+			elif absX < 769 and absY < 769:
+				flags.append(onCurveBit + 84 + 12 * (((absX - 1) & 0x300) >> 8) + (((absY - 1) & 0x300) >> 6) + xySignBits)
+				triplets.append((absX - 1) & 0xff)
+				triplets.append((absY - 1) & 0xff)
+			elif absX < 4096 and absY < 4096:
+				flags.append(onCurveBit + 120 + xySignBits)
+				triplets.append(absX >> 4)
+				triplets.append(((absX & 0xf) << 4) | (absY >> 8))
+				triplets.append(absY & 0xff)
+			else:
+				flags.append(onCurveBit + 124 + xySignBits)
+				triplets.append(absX >> 8)
+				triplets.append(absX & 0xff)
+				triplets.append(absY >> 8)
+				triplets.append(absY & 0xff)
+
+		self.flagStream += flags.tostring()
+		self.glyphStream += triplets.tostring()
 
 
 def unpackBase128(data):
@@ -794,6 +843,16 @@ def unpack255UShort(data):
 		result = code
 	# return result plus left over data
 	return result, data
+
+def pack255UShort(value):
+	if value < 253:
+		return struct.pack(">B", value)
+	elif value < 506:
+		return struct.pack(">BB", 255, value - 253)
+	elif value < 762:
+		return struct.pack(">BB", 254, value - 506)
+	else:
+		return struct.pack(">BH", 253, value)
 
 def write4BytePadding(file):
 	"""Write NUL bytes at the end of file to pad data to a 4-byte boundary."""
