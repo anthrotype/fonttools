@@ -44,7 +44,7 @@ class WOFF2Reader(SFNTReader):
 				% (totalUncompressedSize, len(decompressedData)))
 		self.transformBuffer = StringIO(decompressedData)
 
-		self.flavorData = WOFFFlavorData(self)
+		self.flavorData = WOFF2FlavorData(self)
 
 	def __getitem__(self, tag):
 		entry = self.tables[Tag(tag)]
@@ -169,11 +169,6 @@ class WOFF2Writer(SFNTWriter):
 			entry.saveData(self.transformBuffer, data)
 			self.nextTableOffset += entry.length
 
-		# start calculating total size of WOFF2 font
-		offset = woff2DirectorySize
-		for tag, entry in tables:
-			offset += len(entry.toString())
-
 		# update head's checkSumAdjustment
 		self.writeMasterChecksum()
 
@@ -184,12 +179,16 @@ class WOFF2Writer(SFNTWriter):
 		compressedData = brotli.compress(uncompressedData, brotli.MODE_FONT)
 		self.totalCompressedSize = len(compressedData)
 
+		# start calculating total size of WOFF2 font
+		offset = woff2DirectorySize
+		for tag, entry in tables:
+			offset += len(entry.toString())
 		offset += self.totalCompressedSize
 		offset = (offset + 3) & ~3
 
 		# calculate offsets and lengths for any metadata and/or private data
 		compressedMetaData = privData = b""
-		data = self.flavorData if self.flavorData else WOFFFlavorData()
+		data = self.flavorData if self.flavorData else WOFF2FlavorData()
 		if data.majorVersion is not None and data.minorVersion is not None:
 			self.majorVersion = data.majorVersion
 			self.minorVersion = data.minorVersion
@@ -214,28 +213,25 @@ class WOFF2Writer(SFNTWriter):
 		else:
 			self.privOffset = self.privLength = 0
 
-		# total size of WOFF/WOFF2 font, including any metadata or private data
+		# total size of WOFF2 font, including any metadata or private data
 		self.length = offset
 
 		directory = sstruct.pack(self.directoryFormat, self)
-
-		self.file.seek(self.directorySize)
 		for tag, entry in tables:
 			directory = directory + entry.toString()
-		self.file.seek(0)
-		self.file.write(directory)
 
-		# finally write WOFF2 compressed font data to disk
-		self.file.write(compressedData)
-		write4BytePadding(self.file)
+		# finally write directory and compressed font data to disk
+		fontData = padData(directory + compressedData)
+		self.file.seek(0)
+		self.file.write(fontData)
 
 		# write any WOFF/WOFF2 metadata and/or private data
 		if compressedMetaData:
 			self.file.seek(self.metaOffset)
 			assert self.file.tell() == self.metaOffset
-			self.file.write(compressedMetaData)
 			if privData:
-				write4BytePadding(self.file)
+				compressedMetaData = padData(compressedMetaData)
+			self.file.write(compressedMetaData)
 		if privData:
 			self.file.seek(self.privOffset)
 			assert self.file.tell() == self.privOffset
@@ -756,6 +752,33 @@ class WOFF2GlyfEncoder(object):
 		self.glyphStream += triplets.tostring()
 
 
+class WOFF2FlavorData(WOFFFlavorData):
+
+	Flavor = 'woff2'
+
+	def __init__(self, reader=None):
+		self.majorVersion = None
+		self.minorVersion = None
+		self.metaData = None
+		self.privData = None
+		if reader:
+			self.majorVersion = reader.majorVersion
+			self.minorVersion = reader.minorVersion
+			if reader.metaLength:
+				reader.file.seek(reader.metaOffset)
+				rawData = reader.file.read(reader.metaLength)
+				assert len(rawData) == reader.metaLength
+				import brotli
+				data = brotli.decompress(rawData)
+				assert len(data) == reader.metaOrigLength
+				self.metaData = data
+			if reader.privLength:
+				reader.file.seek(reader.privOffset)
+				data = reader.file.read(reader.privLength)
+				assert len(data) == reader.privLength
+				self.privData = data
+
+
 def unpackBase128(data):
 	""" A UIntBase128 encoded number is a sequence of bytes for which the most
 	significant bit is set for all but the last byte, and clear for the last byte.
@@ -830,9 +853,8 @@ def pack255UShort(value):
 	else:
 		return struct.pack(">BH", 253, value)
 
-def write4BytePadding(file):
-	"""Write NUL bytes at the end of file to pad data to a 4-byte boundary."""
-	file.seek(0, 2)
-	offset = file.tell()
-	paddedOffset = (offset + 3) & ~3
-	file.write(b'\0' * (paddedOffset - offset))
+def padData(data):
+	length = len(data)
+	paddedLength = (length + 3) & ~3
+	paddedData = data + b"\0" * (paddedLength - length)
+	return paddedData
