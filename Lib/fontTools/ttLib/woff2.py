@@ -383,7 +383,7 @@ class WOFF2DirectoryEntry(DirectoryEntry):
 	def toString(self):
 		data = struct.pack('B', self.flags)
 		if (self.flags & 0x3f) == 0x3f:
-			data += struct.pack('>L', self.tag)
+			data += struct.pack('>4s', self.tag)
 		data += packBase128(self.origLength)
 		if self.tag in woff2TransformedTableTags:
 			data += packBase128(self.length)
@@ -453,11 +453,6 @@ class WOFF2GlyfTable(getTableClass('glyf')):
 		if sys.byteorder != "big":
 			self.nContourStream.byteswap()
 		assert len(self.nContourStream) == numGlyphs
-
-		self.ttFont = TTFont(flavor="woff2", recalcBBoxes=False)
-		self.ttFont['head'] = getTableClass('head')()
-		self.ttFont['maxp'] = getTableClass('maxp')()
-		self.ttFont['loca'] = getTableClass('loca')()
 
 		self.glyphOrder = glyphOrder = []
 		for glyphID in range(numGlyphs):
