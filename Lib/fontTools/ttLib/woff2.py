@@ -118,11 +118,6 @@ class WOFF2Writer(SFNTWriter):
 		entry.tag = Tag(tag)
 		entry.origOffset = self.origNextTableOffset
 		if tag == 'head':
-			# set bit 11 of head table's 'flags' field to indicate that the font
-			# was subjected to lossless modifying transform
-			headFlags, = struct.unpack('>H', data[16:18])
-			headFlags |= 1 << 11
-			data = data[:16] + struct.pack('>H', headFlags) + data[18:]
 			entry.checkSum = calcChecksum(data[:8] + b'\0\0\0\0' + data[12:])
 		else:
 			entry.checkSum = calcChecksum(data)
