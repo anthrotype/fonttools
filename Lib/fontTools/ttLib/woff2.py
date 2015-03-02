@@ -788,7 +788,7 @@ def unpackBase128(data):
 	for i in range(5):
 		if len(data) == 0:
 			raise TTLibError('not enough data to unpack UIntBase128')
-		code, = struct.unpack(">B", data[0])
+		code = byteord(data[0])
 		data = data[1:]
 		# if any of the top seven bits are set then we're about to overflow
 		if result & 0xFE000000:
@@ -821,7 +821,7 @@ def packBase128(n):
 
 def unpack255UShort(data):
 	"""Based on MicroType Express specification, section 6.1.1."""
-	code, = struct.unpack(">B", data[:1])
+	code = byteord(data[:1])
 	data = data[1:]
 	if code == 253:
 		# read two more bytes as an unsigned short
@@ -829,12 +829,12 @@ def unpack255UShort(data):
 		data = data[2:]
 	elif code == 254:
 		# read another byte, plus 253 * 2
-		result, = struct.unpack(">B", data[:1])
+		result = byteord(data[:1])
 		result += 506
 		data = data[1:]
 	elif code == 255:
 		# read another byte, plus 253
-		result, = struct.unpack(">B", data[:1])
+		result = byteord(data[:1])
 		result += 253
 		data = data[1:]
 	else:
