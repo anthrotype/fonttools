@@ -4,7 +4,15 @@ from fontTools.misc import sstruct
 import struct
 import sys
 import array
-import brotli
+
+try:
+	import brotli
+except ImportError:
+	print('Import Error: No module named brotli.\n'
+		  'The WOFF2 encoder requires the Brotli Python bindings, available at:\n'
+		  'https://github.com/google/brotli', file=sys.stderr)
+	sys.exit(1)
+
 from fontTools.ttLib import TTFont, TTLibError, getTableModule, getTableClass, getSearchRange
 from fontTools.ttLib.sfnt import SFNTReader, SFNTWriter, DirectoryEntry, WOFFFlavorData, sfntDirectoryFormat, sfntDirectorySize, SFNTDirectoryEntry, sfntDirectoryEntrySize, calcChecksum
 from fontTools.ttLib.tables import ttProgram
