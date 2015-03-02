@@ -4,6 +4,7 @@ from fontTools.misc import sstruct
 import struct
 import sys
 import array
+from collections import OrderedDict
 
 try:
 	import brotli
@@ -34,7 +35,7 @@ class WOFF2Reader(SFNTReader):
 		self.DirectoryEntry = WOFF2DirectoryEntry
 		sstruct.unpack(woff2DirectoryFormat, self.file.read(woff2DirectorySize), self)
 
-		self.tables = {}
+		self.tables = OrderedDict()
 		offset = 0
 		for i in range(self.numTables):
 			entry = self.DirectoryEntry()
@@ -106,8 +107,7 @@ class WOFF2Writer(SFNTWriter):
 		self.nextTableOffset = 0
 		self.transformBuffer = StringIO()
 
-		self.tables = {}
-		self.tableOrder = []
+		self.tables = OrderedDict()
 
 	def __setitem__(self, tag, data):
 		"""Associate new entry named 'tag' with raw table data."""
@@ -118,6 +118,11 @@ class WOFF2Writer(SFNTWriter):
 		entry.tag = Tag(tag)
 		entry.origOffset = self.origNextTableOffset
 		if tag == 'head':
+			# set bit 11 of head table's 'flags' field to indicate that the font
+			# was subjected to lossless modifying transform
+			headFlags, = struct.unpack('>H', data[16:18])
+			headFlags |= 1 << 11
+			data = data[:16] + struct.pack('>H', headFlags) + data[18:]
 			entry.checkSum = calcChecksum(data[:8] + b'\0\0\0\0' + data[12:])
 		else:
 			entry.checkSum = calcChecksum(data)
@@ -130,7 +135,6 @@ class WOFF2Writer(SFNTWriter):
 		self.origNextTableOffset += (entry.origLength + 3) & ~3
 
 		self.tables[tag] = entry
-		self.tableOrder.append(tag)
 
 	@staticmethod
 	def getKnownTagIndex(tag):
@@ -144,8 +148,8 @@ class WOFF2Writer(SFNTWriter):
 		"""
 		if 0:
 			# According to WOFF2 specs, the directory must reflect the 'physical order'
-			# in which the tables have been encoded.
-			tables = [(tag, self.tables[tag]) for tag in self.tableOrder]
+			# in which the tables have been encoded ('tables' is an OrderedDict).
+			tables = self.tables.items()
 		else:
 			# However, for compatibility with the current reference implementation,
 			# we must sort both the directory and table data in ascending order by tag.
