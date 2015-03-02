@@ -38,7 +38,7 @@ class WOFF2Reader(SFNTReader):
 
 		totalUncompressedSize = offset
 		compressedData = self.file.read(self.totalCompressedSize)
-		decompressedData = brotli.decompress(compressedData)
+		decompressedData = brotli.decompress(compressedData, totalUncompressedSize)
 		if len(decompressedData) != totalUncompressedSize:
 			raise TTLibError(
 				'unexpected size for decompressed font data: expected %d, found %d'
