@@ -20,6 +20,27 @@ from fontTools.ttLib.tables import ttProgram
 from fontTools.misc.arrayTools import calcIntBounds
 
 
+def normaliseFont(ttFont):
+	if "DSIG" in ttFont:
+		# WOFF2 encoding can invalidate the 'DSIG' table, hence it must be removed
+		del ttFont["DSIG"]
+
+	if ttFont.sfntVersion == '\x00\x01\x00\x00':
+		# recalc bboxes so that simple glyphs bboxes need not be stored in bboxStream
+		ttFont.recalcBBoxes = True
+		# pad glyph data to 4 byte boundaries
+		ttFont.padGlyphData = True
+		# 'expand' glyph data on decompile
+		ttFont.lazy = False
+		# force decompile glyf table to perform normalisation steps above
+		if not ttFont.isLoaded('glyf'):
+			ttFont['glyf']
+		# set bit 11 of head table's 'flags' field to indicate that the font
+		# was subjected to 'lossless modifying transform'.
+		# (does it also apply to CFF-flavoured fonts?)
+		ttFont['head'].flags |= 1 << 11
+
+
 class WOFF2Reader(SFNTReader):
 
 	flavor = "woff2"
