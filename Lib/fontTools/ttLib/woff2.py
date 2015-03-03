@@ -4,7 +4,6 @@ from fontTools.misc import sstruct
 import struct
 import sys
 import array
-from collections import OrderedDict
 
 try:
 	import brotli
@@ -56,13 +55,15 @@ class WOFF2Reader(SFNTReader):
 		self.DirectoryEntry = WOFF2DirectoryEntry
 		sstruct.unpack(woff2DirectoryFormat, self.file.read(woff2DirectorySize), self)
 
-		self.tables = OrderedDict()
+		self.tables = {}
+		self.tableOrder = []
 		offset = 0
 		for i in range(self.numTables):
 			entry = self.DirectoryEntry()
 			entry.fromFile(self.file)
 			tag = Tag(entry.tag)
 			self.tables[tag] = entry
+			self.tableOrder.append(tag)
 			entry.offset = offset
 			offset += entry.length
 
@@ -128,7 +129,8 @@ class WOFF2Writer(SFNTWriter):
 		self.nextTableOffset = 0
 		self.transformBuffer = StringIO()
 
-		self.tables = OrderedDict()
+		self.tables = {}
+		self.tableOrder = []
 
 	def __setitem__(self, tag, data):
 		"""Associate new entry named 'tag' with raw table data."""
@@ -151,6 +153,7 @@ class WOFF2Writer(SFNTWriter):
 		self.origNextTableOffset += (entry.origLength + 3) & ~3
 
 		self.tables[tag] = entry
+		self.tableOrder.append(tag)
 
 	@staticmethod
 	def getKnownTagIndex(tag):
@@ -164,15 +167,21 @@ class WOFF2Writer(SFNTWriter):
 		"""
 		if 0:
 			# According to WOFF2 specs, the directory must reflect the 'physical order'
-			# in which the tables have been encoded ('tables' is an OrderedDict).
-			tables = self.tables.items()
+			# in which the tables have been encoded. The only additional requirement
+			# is that glyf and loca tables are present 'as a pair with loca table
+			# following the glyf table'.
+			if 'loca' in self.tableOrder and 'glyf' in self.tableOrder:
+				glyfIndex = self.tableOrder.index('glyf')
+				locaIndex = self.tableOrder.index('loca')
+				self.tableOrder.insert(glyfIndex+1, self.tableOrder.pop(locaIndex))
+			tables = [(tag, self.tables[tag]) for tag in self.tableOrder]
 		else:
-			# However, for compatibility with the current reference implementation,
-			# we must sort both the directory and table data in ascending order by tag.
+			# However, for compatibility with the woff2 decoder in the current OpenType
+			# Sanitiser, we must sort the table data in ascending order by tag.
 			# See https://github.com/google/woff2/pull/3
 			tables = sorted(self.tables.items())
-			# we also need to 'normalise' the original table offsets used for checksum
-			# calculation
+			# as a result, we also need to 'normalise' the original table offsets used
+			# for checksum calculation
 			offset = sfntDirectorySize + sfntDirectoryEntrySize * len(tables)
 			for tag, entry in tables:
 				entry.origOffset = offset
