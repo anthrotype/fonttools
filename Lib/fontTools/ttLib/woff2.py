@@ -20,23 +20,28 @@ from fontTools.misc.arrayTools import calcIntBounds
 
 
 def normaliseFont(ttFont):
+	""" The WOFF 2.0 conversion is guaranteed to be lossless (in a bitwise sense)
+	only for normalised font files. Normalisation occurs before transformations,
+	and involves:
+		- removing the DSIG table, since the encoding process can invalidate it;
+		- recalculating simple glyph bounding boxes so they don't need be stored in
+		  the bboxStream, but can be recalculated by the decoder;
+		- padding glyph offsets to multiple of 4 bytes;
+		- setting bit 11 of head 'flags' field to indicate that the font has
+		  undergone some 'lossless modifying transform'.
+	"""
 	if "DSIG" in ttFont:
-		# WOFF2 encoding can invalidate the 'DSIG' table, hence it must be removed
 		del ttFont["DSIG"]
 
 	if ttFont.sfntVersion == '\x00\x01\x00\x00':
-		# recalc bboxes so that simple glyphs bboxes need not be stored in bboxStream
 		ttFont.recalcBBoxes = True
-		# pad glyph data to 4 byte boundaries
 		ttFont.padGlyphData = True
-		# 'expand' glyph data on decompile
+		# don't be lazy so that glyph data is 'expanded' on decompile
 		ttFont.lazy = False
 		# force decompile glyf table to perform normalisation steps above
 		if not ttFont.isLoaded('glyf'):
 			ttFont['glyf']
-		# set bit 11 of head table's 'flags' field to indicate that the font
-		# was subjected to 'lossless modifying transform'.
-		# (does it also apply to CFF-flavoured fonts?)
+		# does it also apply to CFF-flavoured fonts?
 		ttFont['head'].flags |= 1 << 11
 
 
@@ -432,7 +437,7 @@ class WOFF2GlyfTable(getTableClass('glyf')):
 
 	def __init__(self):
 		self.tableTag = Tag('glyf')
-		self.ttFont = TTFont(flavor="woff2", recalcBBoxes=False)
+		self.ttFont = TTFont(flavor="woff2", recalcBBoxes=False, padGlyphData=True)
 		self.ttFont['head'] = getTableClass('head')()
 		self.ttFont['maxp'] = getTableClass('maxp')()
 		self.ttFont['loca'] = getTableClass('loca')()
