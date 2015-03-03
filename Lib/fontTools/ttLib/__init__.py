@@ -202,6 +202,12 @@ class TTFont(object):
 		else:
 			# assume "file" is a writable file object
 			closeStream = 0
+
+		if self.flavor == "woff2":
+			from fontTools.ttLib import woff2
+			woff2.normaliseFont(self)
+			# it doesn't make sense to reorder tables in WOFF2, therefore skip it
+			reorderTables = False
 		
 		tags = list(self.keys())
 		if "GlyphOrder" in tags:
