@@ -127,7 +127,6 @@ class TTFont(object):
 		immediately.  The default is lazy=None which is somewhere in between.
 		"""
 		
-		from fontTools.ttLib import sfnt
 		self.verbose = verbose
 		self.quiet = quiet
 		self.lazy = lazy
@@ -165,7 +164,7 @@ class TTFont(object):
 				file = open(file, "rb")
 		else:
 			pass # assume "file" is a readable file object
-		self.reader = sfnt.SFNTReader(file, checkChecksums, fontNumber=fontNumber)
+		self.reader = newSFNTReader(file, checkChecksums, fontNumber=fontNumber)
 		self.sfntVersion = self.reader.sfntVersion
 		self.flavor = self.reader.flavor
 		self.flavorData = self.reader.flavorData
@@ -183,7 +182,6 @@ class TTFont(object):
 		On the Mac, if makeSuitcase is true, a suitcase (resource fork)
 		file will we made instead of a flat .ttf file. 
 		"""
-		from fontTools.ttLib import sfnt
 		if not hasattr(file, "write"):
 			closeStream = 1
 			if os.name == "mac" and makeSuitcase:
@@ -207,7 +205,7 @@ class TTFont(object):
 			tmp = tempfile.TemporaryFile(prefix="ttx-fonttools")
 		else:
 			tmp = file
-		writer = sfnt.SFNTWriter(tmp, numTables, self.sfntVersion, self.flavor, self.flavorData)
+		writer = newSFNTWriter(tmp, numTables, self.sfntVersion, self.flavor, self.flavorData)
 		
 		done = []
 		for tag in tags:
@@ -801,11 +799,31 @@ def getClassTag(klass):
 	return identifierToTag(name)
 
 
-
 def newTable(tag):
 	"""Return a new instance of a table."""
 	tableClass = getTableClass(tag)
 	return tableClass(tag)
+
+
+def newSFNTReader(file, checkChecksums=1, fontNumber=-1):
+	sfntVersion = Tag(file.read(4))
+	file.seek(0)
+	if sfntVersion == "wOF2":
+		from fontTools.ttLib.woff2 import WOFF2Reader
+		return WOFF2Reader(file)
+	else:
+		from fontTools.ttLib.sfnt import SFNTReader
+		return SFNTReader(file, checkChecksums, fontNumber)
+
+
+def newSFNTWriter(file, numTables, sfntVersion="\000\001\000\000",
+		          flavor=None, flavorData=None):
+	if flavor == "woff2":
+		from fontTools.ttLib.woff2 import WOFF2Writer
+		return WOFF2Writer(file, numTables, sfntVersion, flavorData)
+	else:
+		from fontTools.ttLib.sfnt import SFNTWriter
+		return SFNTWriter(file, numTables, sfntVersion, flavor, flavorData)
 
 
 def _escapechar(c):
@@ -936,9 +954,8 @@ def reorderFontTables(inFile, outFile, tableOrder=None, checkChecksums=False):
 	"""Rewrite a font file, ordering the tables as recommended by the
 	OpenType specification 1.4.
 	"""
-	from fontTools.ttLib.sfnt import SFNTReader, SFNTWriter
-	reader = SFNTReader(inFile, checkChecksums=checkChecksums)
-	writer = SFNTWriter(outFile, len(reader.tables), reader.sfntVersion, reader.flavor, reader.flavorData)
+	reader = newSFNTReader(inFile, checkChecksums=checkChecksums)
+	writer = newSFNTWriter(outFile, len(reader.tables), reader.sfntVersion, reader.flavor, reader.flavorData)
 	tables = list(reader.keys())
 	for tag in sortedTagList(tables, tableOrder):
 		writer[tag] = reader[tag]
