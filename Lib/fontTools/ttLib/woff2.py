@@ -8,7 +8,7 @@ import array
 try:
 	import brotli
 except ImportError:
-	print('Import Error: No module named brotli.\n'
+	print('ImportError: No module named brotli.\n'
 		  'The WOFF2 encoder requires the Brotli Python bindings, available at:\n'
 		  'https://github.com/google/brotli', file=sys.stderr)
 	sys.exit(1)
@@ -21,14 +21,14 @@ from fontTools.misc.arrayTools import calcIntBounds
 
 def normaliseFont(ttFont):
 	""" The WOFF 2.0 conversion is guaranteed to be lossless (in a bitwise sense)
-	only for normalised font files. Normalisation occurs before transformations,
+	only for normalised font files. Normalisation occurs before any transformations,
 	and involves:
 		- removing the DSIG table, since the encoding process can invalidate it;
 		- recalculating simple glyph bounding boxes so they don't need be stored in
 		  the bboxStream, but can be recalculated by the decoder;
 		- padding glyph offsets to multiple of 4 bytes;
 		- setting bit 11 of head 'flags' field to indicate that the font has
-		  undergone some 'lossless modifying transform'.
+		  undergone a 'lossless modifying transform'.
 	"""
 	if "DSIG" in ttFont:
 		del ttFont["DSIG"]
@@ -41,7 +41,7 @@ def normaliseFont(ttFont):
 		# force decompile glyf table to perform normalisation steps above
 		if not ttFont.isLoaded('glyf'):
 			ttFont['glyf']
-		# does it also apply to CFF-flavoured fonts?
+		# not sure if head flag 11 also applies to CFF-flavoured fonts...
 		ttFont['head'].flags |= 1 << 11
 
 
@@ -140,7 +140,7 @@ class WOFF2Writer(SFNTWriter):
 	def __setitem__(self, tag, data):
 		"""Associate new entry named 'tag' with raw table data."""
 		if tag in self.tables:
-			raise TTLibError("cannot rewrite '%s' table: length does not match directory entry" % tag)
+			raise TTLibError("cannot rewrite '%s' table" % tag)
 
 		entry = self.DirectoryEntry()
 		entry.tag = Tag(tag)
@@ -423,7 +423,7 @@ class WOFF2DirectoryEntry(DirectoryEntry):
 		return data
 
 	def toString(self):
-		data = struct.pack('B', self.flags)
+		data = bytechr(self.flags)
 		if (self.flags & 0x3f) == 0x3f:
 			data += struct.pack('>4s', self.tag)
 		data += packBase128(self.origLength)
@@ -433,7 +433,7 @@ class WOFF2DirectoryEntry(DirectoryEntry):
 
 
 class WOFF2GlyfTable(getTableClass('glyf')):
-	""" Decoder/encoder for WOFF2 table transforms. """
+	"""Decoder/encoder for WOFF2 'glyf' table transforms."""
 
 	def __init__(self):
 		self.tableTag = Tag('glyf')
