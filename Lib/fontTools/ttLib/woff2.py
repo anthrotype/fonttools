@@ -146,7 +146,7 @@ class WOFF2Writer(SFNTWriter):
 			entry.checkSum = calcChecksum(data[:8] + b'\0\0\0\0' + data[12:])
 		else:
 			entry.checkSum = calcChecksum(data)
-		entry.flags = self.getKnownTagIndex(entry.tag)
+		entry.flags = getKnownTagIndex(entry.tag)
 		entry.origLength = len(data)
 		# WOFF2 table data are written to disk only on close(), after all tags
 		# have been specified
@@ -154,13 +154,6 @@ class WOFF2Writer(SFNTWriter):
 
 		self.tables[tag] = entry
 		self.tableOrder.append(tag)
-
-	@staticmethod
-	def getKnownTagIndex(tag):
-		for i in range(len(woff2KnownTags)):
-			if tag == woff2KnownTags[i]:
-				return i
-		return 0x3F
 
 	def close(self):
 		""" All tags must have been specified. Now write the table data and directory.
@@ -386,6 +379,14 @@ bboxFormat = """
 		xMax:				h
 		yMax:				h
 """
+
+
+def getKnownTagIndex(tag):
+	"""Return index of 'tag' in woff2KnownTags list. Return 63 if not found."""
+	for i in range(len(woff2KnownTags)):
+		if tag == woff2KnownTags[i]:
+			return i
+	return 0x3F
 
 
 class WOFF2DirectoryEntry(DirectoryEntry):
