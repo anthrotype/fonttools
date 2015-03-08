@@ -129,8 +129,6 @@ class WOFF2Writer(SFNTWriter):
 
 		self.signature = "wOF2"
 
-		# calculate original SFNT offsets to compute checksum adjustment
-		self.origNextTableOffset = sfntDirectorySize + numTables * sfntDirectoryEntrySize
 		self.nextTableOffset = 0
 		self.transformBuffer = StringIO()
 
@@ -144,7 +142,6 @@ class WOFF2Writer(SFNTWriter):
 
 		entry = self.DirectoryEntry()
 		entry.tag = Tag(tag)
-		entry.origOffset = self.origNextTableOffset
 		if tag == 'head':
 			entry.checkSum = calcChecksum(data[:8] + b'\0\0\0\0' + data[12:])
 		else:
@@ -154,8 +151,6 @@ class WOFF2Writer(SFNTWriter):
 		# WOFF2 table data are written to disk only on close(), after all tags
 		# have been specified
 		entry.data = data
-
-		self.origNextTableOffset += (entry.origLength + 3) & ~3
 
 		self.tables[tag] = entry
 		self.tableOrder.append(tag)
@@ -170,40 +165,38 @@ class WOFF2Writer(SFNTWriter):
 	def close(self):
 		""" All tags must have been specified. Now write the table data and directory.
 		"""
-		if 0:
-			# According to WOFF2 specs, the directory must reflect the 'physical order'
-			# in which the tables have been encoded. The only additional requirement
-			# is that glyf and loca tables are present 'as a pair with loca table
-			# following the glyf table'.
-			if 'loca' in self.tableOrder and 'glyf' in self.tableOrder:
-				glyfIndex = self.tableOrder.index('glyf')
-				locaIndex = self.tableOrder.index('loca')
-				self.tableOrder.insert(glyfIndex+1, self.tableOrder.pop(locaIndex))
-			tables = [(tag, self.tables[tag]) for tag in self.tableOrder]
-		else:
-			# However, for compatibility with the woff2 decoder in the current OpenType
-			# Sanitiser, we must sort the table data in ascending order by tag.
-			# See https://github.com/google/woff2/pull/3
-			tables = sorted(self.tables.items())
-			# as a result, we also need to 'normalise' the original table offsets used
-			# for checksum calculation
-			offset = sfntDirectorySize + sfntDirectoryEntrySize * len(tables)
-			for tag, entry in tables:
-				entry.origOffset = offset
-				offset = offset + ((entry.origLength + 3) & ~3)
+		# According to the specs, the WOFF2 table directory must reflect the 'physical
+		# order' in which the tables have been encoded. Moreover, the glyf and loca
+		# tables must be placed 'as a pair with loca table following the glyf table'.
+		"""\
+		if 'loca' in self.tableOrder and 'glyf' in self.tableOrder:
+			glyfIndex = self.tableOrder.index('glyf')
+			locaIndex = self.tableOrder.index('loca')
+			self.tableOrder.insert(glyfIndex+1, self.tableOrder.pop(locaIndex))
+		tables = [(tag, self.tables[tag]) for tag in self.tableOrder]
+		"""
+		# However, to pass the legacy OpenType Sanitiser currently included in browsers,
+		# we must sort the table directory and data alphabetically by tag.
+		# See:
+		# https://github.com/google/woff2/pull/3
+		# https://lists.w3.org/Archives/Public/public-webfonts-wg/2015Mar/0000.html
+		# TODO(user): change to match spec once browsers are on newer OTS
+		tables = sorted(self.tables.items())
 
 		if len(tables) != self.numTables:
 			raise TTLibError("wrong number of tables; expected %d, found %d" % (self.numTables, len(tables)))
 
-		self.reserved = 0
+		# compute the original SFNT offsets for checksum adjustment calculation
+		offset = sfntDirectorySize + sfntDirectoryEntrySize * len(tables)
+		for tag, entry in tables:
+			entry.origOffset = offset
+			offset += (entry.origLength + 3) & ~3
 
 		# size of uncompressed font
-		self.totalSfntSize = sfntDirectorySize
-		self.totalSfntSize += sfntDirectoryEntrySize * len(tables)
-		for tag, entry in tables:
-			self.totalSfntSize += (entry.origLength + 3) & ~3
+		self.totalSfntSize = offset
 
 		self.signature = b"wOF2"
+		self.reserved = 0
 
 		for tag, entry in tables:
 			if tag == "loca":
