@@ -24,7 +24,7 @@ def normaliseFont(ttFont):
 	only for normalised font files. Normalisation occurs before any transformations,
 	and involves:
 		- removing the DSIG table, since the encoding process can invalidate it;
-		- recalculating simple glyph bounding boxes so they don't need be stored in
+		- recalculating simple glyph bounding boxes so they don't need to be stored in
 		  the bboxStream, but can be recalculated by the decoder;
 		- padding glyph offsets to multiple of 4 bytes;
 		- setting bit 11 of head 'flags' field to indicate that the font has
