@@ -29,17 +29,20 @@ def normaliseFont(ttFont):
 		- removing the DSIG table, since the encoding process can invalidate it;
 		- setting bit 11 of head 'flags' field to indicate that the font has
 		  undergone a 'lossless modifying transform'.
-	For TrueType-flavoured OpenType fonts, normalisation also involves:
-		- padding glyph offsets to multiple of 4 bytes.
+	For TrueType-flavoured OpenType fonts, normalisation also involves padding
+	glyph offsets to multiple of 4 bytes.
 	"""
 	if "DSIG" in ttFont:
 		del ttFont["DSIG"]
 		ttFont['head'].flags |= 1 << 11
 
+	# The notion of "nominal size" has been removed from the WOFF2 Specification,
+	# but as of today (15 April 2015) most decoders still expects padded data.
+	# TODO(user): delete next block once glyph padding is no longer required
 	if ttFont.sfntVersion == '\x00\x01\x00\x00':
 		# don't be lazy so that glyph data is 'expanded' on decompile
 		ttFont.lazy = False
-		# force decompile glyf table to perform normalisation steps above
+		# decompile glyf table to perform padding normalisation upon compile
 		if not ttFont.isLoaded('glyf'):
 			ttFont['glyf']
 
@@ -190,6 +193,7 @@ class WOFF2Writer(SFNTWriter):
 		self.signature = b"wOF2"
 		self.reserved = 0
 
+		# transform glyf and loca table data
 		for tag, entry in tables:
 			if tag == "loca":
 				data = b""
@@ -201,6 +205,7 @@ class WOFF2Writer(SFNTWriter):
 				data = glyfTable.transform(entry.data)
 			else:
 				data = entry.data
+			# write tables to transformBuffer
 			entry.offset = self.nextTableOffset
 			entry.saveData(self.transformBuffer, data)
 			self.nextTableOffset += entry.length
