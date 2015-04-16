@@ -58,7 +58,7 @@ elif sys.platform == "darwin":
 haveBrotli = False
 try:
 	import brotli
-	haveBrotli True
+	haveBrotli = True
 except ImportError:
 	pass
 
