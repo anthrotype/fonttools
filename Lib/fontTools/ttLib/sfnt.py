@@ -28,17 +28,22 @@ from fontTools.misc.arrayTools import calcIntBounds
 
 class SFNTReader(object):
 
+	flavor = None
+
 	def __init__(self, file, checkChecksums=1, fontNumber=-1):
 		self.file = file
 		self.checkChecksums = checkChecksums
 		self.fontNumber = fontNumber
+		self.flavorData = None
 
 		self._setupDirectory()
+
 		if self.isCollection():
-			self._readCollectionHeader()
 			self.seekOffsetTable(fontNumber)
+		else:
+			self.file.seek(0)
+
 		self.readDirectory()
-		self._setupFlavorData()
 
 	def _setupDirectory(self):
 		self.directoryFormat = sfntDirectoryFormat
@@ -51,6 +56,15 @@ class SFNTReader(object):
 		ttcTag = self.file.read(4)
 		self.file.seek(currOffset)
 		return ttcTag == b"ttcf"
+
+	def seekOffsetTable(self, fontNumber):
+		if not self.isCollection():
+			raise TTLibError("Not a Font Collection (bad TTCTag)")
+		if not hasattr(self, 'numFonts'):
+			self._readCollectionHeader()
+		if not 0 <= fontNumber < self.numFonts:
+			raise TTLibError("specify a font number between 0 and %d (inclusive)" % (self.numFonts - 1))
+		self.file.seek(self.offsetTables[fontNumber])
 
 	def _readCollectionHeader(self):
 		assert self.isCollection()
@@ -70,13 +84,6 @@ class SFNTReader(object):
 		if self.Version == 0x00020000:
 			pass  # ignoring version 2.0 signatures
 
-	def seekOffsetTable(self, fontNumber):
-		if not self.isCollection():
-			raise TTLibError("Not a Font Collection (bad TTCTag)")
-		if not 0 <= fontNumber < self.numFonts:
-			raise TTLibError("specify a font number between 0 and %d (inclusive)" % (self.numFonts - 1))
-		self.file.seek(self.offsetTables[fontNumber])
-
 	def readDirectory(self):
 		data = self.file.read(self.directorySize)
 		if len(data) != self.directorySize:
@@ -93,10 +100,6 @@ class SFNTReader(object):
 			entry = self.DirectoryEntry()
 			entry.fromFile(self.file)
 			self.tables[Tag(entry.tag)] = entry
-
-	def _setupFlavorData(self):
-		self.flavor = None
-		self.flavorData = None
 
 	def has_key(self, tag):
 		return tag in self.tables
@@ -139,6 +142,10 @@ class WOFFReader(SFNTReader):
 
 	flavor = "woff"
 
+	def __init__(self, file, checkChecksums=1, fontNumber=-1):
+		super(WOFFReader, self).__init__(file, checkChecksums, fontNumber)
+		self.flavorData = WOFFFlavorData(self)
+
 	def _setupDirectory(self):
 		signature = self.file.read(4)
 		self.file.seek(0)
@@ -149,9 +156,6 @@ class WOFFReader(SFNTReader):
 		self.directorySize = woffDirectorySize
 		self.DirectoryEntry = WOFFDirectoryEntry
 
-	def _setupFlavorData(self):
-		self.flavorData = WOFFFlavorData(self)
-
 
 class WOFF2Reader(WOFFReader):
 
@@ -159,7 +163,18 @@ class WOFF2Reader(WOFFReader):
 
 	def __init__(self, file):
 		super(WOFF2Reader, self).__init__(file)
-		self._decompressFont()
+
+		# decompress font data stream
+		self.file.seek(self.compressedDataOffset)
+		compressedData = self.file.read(self.totalCompressedSize)
+		import brotli
+		decompressedData = brotli.decompress(compressedData)
+		totalUncompressedSize = sum([entry.length for entry in self.tables.values()])
+		if len(decompressedData) != totalUncompressedSize:
+			raise TTLibError(
+				'unexpected size for decompressed font data: expected %d, found %d'
+				% (totalUncompressedSize, len(decompressedData)))
+		self.transformBuffer = StringIO(decompressedData)
 
 	def _setupDirectory(self):
 		signature = self.file.read(4)
@@ -172,7 +187,7 @@ class WOFF2Reader(WOFFReader):
 		self.DirectoryEntry = WOFF2DirectoryEntry
 
 	def _readDirectoryEntries(self):
-		# must calculate offsets to tables in the uncompressed 'transformBuffer'
+		# calculate offsets to tables in the uncompressed 'transformBuffer'
 		self.tables = {}
 		offset = 0
 		for i in range(self.numTables):
@@ -183,20 +198,6 @@ class WOFF2Reader(WOFFReader):
 			offset += entry.length
 		# compressed font data starts at the end of variable-length directory
 		self.compressedDataOffset = self.file.tell()
-
-	def _decompressFont(self):
-		import brotli
-		assert hasattr(self, 'totalCompressedSize') and hasattr(self, 'tables') and \
-			hasattr(self, 'compressedDataOffset')
-		self.file.seek(self.compressedDataOffset)
-		compressedData = self.file.read(self.totalCompressedSize)
-		decompressedData = brotli.decompress(compressedData)
-		totalUncompressedSize = sum([entry.length for entry in self.tables.values()])
-		if len(decompressedData) != totalUncompressedSize:
-			raise TTLibError(
-				'unexpected size for decompressed font data: expected %d, found %d'
-				% (totalUncompressedSize, len(decompressedData)))
-		self.transformBuffer = StringIO(decompressedData)
 
 	def __getitem__(self, tag):
 		"""Fetch the raw table data. Reconstruct transformed 'glyf' and 'loca'."""
