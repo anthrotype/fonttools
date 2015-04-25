@@ -52,7 +52,7 @@ def make_output_name(infile, flavor, outdir=None, overwrite=False):
                 with open(infile, "rb") as f:
                     f.seek(4)
                     sfntVersion = f.read(4)
-                new_ext = '.ttf' if sfntVersion == b"\0\0\0\0" else ".otf"
+                new_ext = '.ttf' if sfntVersion == b"\0\1\0\0" else ".otf"
             else:
                 raise IOError(
                     "cannot read 'sfntVersion': file '%s' not found" % infile)
