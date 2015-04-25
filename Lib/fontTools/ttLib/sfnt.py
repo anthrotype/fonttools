@@ -26,6 +26,68 @@ from fontTools.misc import sstruct
 from fontTools.misc.arrayTools import calcIntBounds
 
 
+class FlavorData(object):
+
+	flavor = None
+
+	def __init__(self, reader=None):
+		self.majorVersion = None
+		self.minorVersion = None
+		self.metaData = b""
+		self.privData = b""
+		if reader:
+			self.majorVersion = reader.majorVersion
+			self.minorVersion = reader.minorVersion
+			if reader.metaLength:
+				reader.file.seek(reader.metaOffset)
+				rawData = reader.file.read(reader.metaLength)
+				assert len(rawData) == reader.metaLength
+				data = self.decodeData(rawData)
+				assert len(data) == reader.metaOrigLength
+				self.metaData = data
+			if reader.privLength:
+				reader.file.seek(reader.privOffset)
+				data = reader.file.read(reader.privLength)
+				assert len(data) == reader.privLength
+				self.privData = data
+
+	def decodeData(self, rawData):
+		raise NotImplementedError
+
+	def encodeData(self, data):
+		raise NotImplementedError
+
+	@property
+	def compressedMetaData(self):
+		return self.encodeData(self.metaData) if self.metaData else b""
+
+
+class WOFFFlavorData(FlavorData):
+
+	flavor = "woff"
+
+	def decodeData(self, rawData):
+		import zlib
+		return zlib.decompress(rawData)
+
+	def encodeData(self, data):
+		import zlib
+		return zlib.compress(data)
+
+
+class WOFF2FlavorData(FlavorData):
+
+	flavor = "woff2"
+
+	def decodeData(self, rawData):
+		import brotli
+		return brotli.decompress(rawData)
+
+	def encodeData(self, data):
+		import brotli
+		return brotli.compress(data)
+
+
 class SFNTReader(object):
 
 	flavor = None
@@ -141,10 +203,11 @@ class SFNTReader(object):
 class WOFFReader(SFNTReader):
 
 	flavor = "woff"
+	FlavorData = WOFFFlavorData
 
 	def __init__(self, file, checkChecksums=1, fontNumber=-1):
 		super(WOFFReader, self).__init__(file, checkChecksums, fontNumber)
-		self.flavorData = WOFFFlavorData(self)
+		self.flavorData = self.FlavorData(self)
 
 	def _setupDirectory(self):
 		signature = self.file.read(4)
@@ -160,6 +223,7 @@ class WOFFReader(SFNTReader):
 class WOFF2Reader(WOFFReader):
 
 	flavor = "woff2"
+	FlavorData = WOFF2FlavorData
 
 	def __init__(self, file):
 		super(WOFF2Reader, self).__init__(file)
@@ -232,12 +296,13 @@ class WOFF2Reader(WOFFReader):
 class SFNTWriter(object):
 
 	flavor = None
-	flavorData = None
 
-	def __init__(self, file, numTables, sfntVersion="\000\001\000\000"):
+	def __init__(self, file, numTables, sfntVersion="\000\001\000\000",
+		         flavorData=None):
 		self.file = file
 		self.numTables = numTables
 		self.sfntVersion = Tag(sfntVersion)
+		self.flavorData = flavorData
 
 		self.tables = OrderedDict()
 		self._setupDirectory()
@@ -338,17 +403,18 @@ class SFNTWriter(object):
 class WOFFWriter(SFNTWriter):
 
 	flavor = 'woff'
+	FlavorData = WOFFFlavorData
 
 	def __init__(self, file, numTables, sfntVersion="\000\001\000\000",
 		         flavorData=None):
 		super(WOFFWriter, self).__init__(file, numTables, sfntVersion)
+
+		self.flavorData = self.FlavorData()
 		if flavorData is not None:
-			if not isinstance(flavorData, WOFFFlavorData):
-				raise TypeError("expected WOFFFlavorData instance, found %s" % type(flavorData))
-			self.flavorData = flavorData
-			self.flavorData.flavor = self.flavor
-		else:
-			self.flavorData = WOFFFlavorData(flavor=self.flavor)
+			if not isinstance(flavorData, FlavorData):
+				raise TypeError("expected FlavorData, found %s" % type(flavorData))
+			# make shallow copy of flavorData attributes
+			self.flavorData.__dict__.update(flavorData.__dict__)
 
 	def _setupDirectory(self):
 		self.directoryFormat = woffDirectoryFormat
@@ -357,72 +423,73 @@ class WOFFWriter(SFNTWriter):
 
 	def close(self):
 		self._assertNumTables()
+
 		self.signature = b"wOFF"
 		self.reserved = 0
-		self.totalSfntSize = self._calcSfntOffsetsAndSize()
-		self.length = self._calcWoffSize()
+		self.totalSfntSize = self._calcSftnSize()
+		self.majorVersion, self.minorVersion = self.getVersion()
+		self.length = self._calcTotalSize()
+
 		self._writeDirectory()
-		self._writeMetaAndPrivData()
+		self._writeFlavorData()
 
-	def _calcSfntOffsetsAndSize(self):
-		# compute the original SFNT offsets for checksum adjustment calculation
-		offset = sfntDirectorySize + sfntDirectoryEntrySize * len(self.tables)
+	def _calcSftnSize(self):
+		size = sfntDirectorySize + sfntDirectoryEntrySize * len(self.tables)
 		for entry in self.tables.values():
-			entry.origOffset = offset
-			offset += (entry.origLength + 3) & ~3
-		# size of original uncompressed font
-		return offset
+			size += (entry.origLength + 3) & ~3
+		return size
 
-	def _calcWoffSize(self):
+	def getVersion(self):
+		data = self.flavorData
+		if data.majorVersion is not None and data.minorVersion is not None:
+			return data.majorVersion, data.minorVersion
+		else:
+			if hasattr(self, 'headTable'):
+				return struct.unpack(">HH", self.headTable[4:8])
+			else:
+				return 0, 0
+
+	def _calcTotalSize(self):
 		offset = self.directorySize + self.DirectoryEntry.formatSize * len(self.tables)
 		for entry in self.tables.values():
 			offset += (entry.length + 3) & ~3
-		offset = self._calcMetaAndPrivDataSize(offset)
+		offset = self._calcFlavorDataOffsetsAndSize(offset)
 		return offset
 
-	def _calcMetaAndPrivDataSize(self, offset):
+	def _calcFlavorDataOffsetsAndSize(self, offset):
 		# calculate offsets and lengths for any metadata and/or private data
-		self.compressedMetaData = self.privData = b""
 		data = self.flavorData
-		if data.majorVersion is not None and data.minorVersion is not None:
-			self.majorVersion = data.majorVersion
-			self.minorVersion = data.minorVersion
-		else:
-			if hasattr(self, 'headTable'):
-				self.majorVersion, self.minorVersion = struct.unpack(">HH", self.headTable[4:8])
-			else:
-				self.majorVersion = self.minorVersion = 0
 		if data.metaData:
 			self.metaOrigLength = len(data.metaData)
 			self.metaOffset = offset
-			self.compressedMetaData = data.compress(data.metaData)
-			self.metaLength = len(self.compressedMetaData)
+			self.metaLength = len(data.compressedMetaData)
 			offset += self.metaLength
 		else:
 			self.metaOffset = self.metaLength = self.metaOrigLength = 0
 		if data.privData:
-			self.privData = data.privData
 			# make sure private data is padded to 4-byte boundary
 			offset = (offset + 3) & ~3
 			self.privOffset = offset
-			self.privLength = len(self.privData)
+			self.privLength = len(data.privData)
 			offset += self.privLength
 		else:
 			self.privOffset = self.privLength = 0
 		return offset
 
-	def _writeMetaAndPrivData(self):
-		# write any WOFF/WOFF2 metadata and/or private data using appropiate padding
-		if self.compressedMetaData and self.privData:
-			self.compressedMetaData = padData(self.compressedMetaData)
-		if self.compressedMetaData:
+	def _writeFlavorData(self):
+		# write any metadata and/or private data using appropriate padding
+		compressedMetaData = self.flavorData.compressedMetaData
+		privData = self.flavorData.privData
+		if compressedMetaData and privData:
+			compressedMetaData = padData(compressedMetaData)
+		if compressedMetaData:
 			self.file.seek(self.metaOffset)
 			assert self.file.tell() == self.metaOffset
-			self.file.write(self.compressedMetaData)
-		if self.privData:
+			self.file.write(compressedMetaData)
+		if privData:
 			self.file.seek(self.privOffset)
 			assert self.file.tell() == self.privOffset
-			self.file.write(self.privData)
+			self.file.write(privData)
 
 	def writeMasterChecksum(self, directory):
 		directory = self._makeDummySFNTDirectory()
@@ -431,6 +498,13 @@ class WOFFWriter(SFNTWriter):
 	def _makeDummySFNTDirectory(self):
 		"""Create dummy SFNT directory for WOFF/WOFF2 checksum calculation."""
 		assert self.flavor in ('woff', 'woff2'), "unsupported flavor"
+
+		# compute the original SFNT offsets
+		offset = sfntDirectorySize + sfntDirectoryEntrySize * len(self.tables)
+		for entry in self.tables.values():
+			entry.origOffset = offset
+			offset += (entry.origLength + 3) & ~3
+
 		self.searchRange, self.entrySelector, self.rangeShift = getSearchRange(
 			len(self.tables), 16)
 		directory = sstruct.pack(sfntDirectoryFormat, self)
@@ -447,6 +521,7 @@ class WOFFWriter(SFNTWriter):
 class WOFF2Writer(WOFFWriter):
 
 	flavor = 'woff2'
+	FlavorData = WOFF2FlavorData
 
 	def _setupDirectory(self):
 		self.directoryFormat = woff2DirectoryFormat
@@ -483,35 +558,6 @@ class WOFF2Writer(WOFFWriter):
 
 		self._assertNumTables()
 
-		self.signature = b"wOF2"
-		self.reserved = 0
-
-		self.totalSfntSize = self._calcSfntOffsetsAndSize()
-
-		self._writeTransformedTables()
-
-		# update head's checkSumAdjustment
-		self.writeMasterChecksum()
-
-		# compress transformBuffer with Brotli
-		self.transformBuffer.seek(0)
-		uncompressedData = self.transformBuffer.read()
-		import brotli
-		compressedData = brotli.compress(uncompressedData, brotli.MODE_FONT)
-		self.totalCompressedSize = len(compressedData)
-
-		self.length = self._calcWoffSize()
-
-		directory = sstruct.pack(self.directoryFormat, self)
-		for entry in self.tables.values():
-			directory = directory + entry.toString()
-		self.file.seek(0)
-		fontData = padData(directory + compressedData)
-		self.file.write(fontData)
-
-		self._writeMetaAndPrivData()
-
-	def _writeTransformedTables(self):
 		# transform glyf and loca table data
 		for tag, entry in self.tables.items():
 			if tag == "loca":
@@ -529,13 +575,37 @@ class WOFF2Writer(WOFFWriter):
 			entry.saveData(self.transformBuffer, data)
 			self.nextTableOffset += entry.length
 
-	def _calcWoffSize(self):
+		self.writeMasterChecksum()
+
+		# compress transformBuffer with Brotli
+		self.transformBuffer.seek(0)
+		uncompressedData = self.transformBuffer.read()
+		import brotli
+		compressedData = brotli.compress(uncompressedData, brotli.MODE_FONT)
+
+		self.signature = b"wOF2"
+		self.reserved = 0
+		self.totalSfntSize = self._calcSftnSize()
+		self.totalCompressedSize = len(compressedData)
+		self.length = self._calcTotalSize()
+		self.majorVersion, self.minorVersion = self.getVersion()
+
+		directory = sstruct.pack(self.directoryFormat, self)
+		for entry in self.tables.values():
+			directory = directory + entry.toString()
+		self.file.seek(0)
+		fontData = padData(directory + compressedData)
+		self.file.write(fontData)
+
+		self._writeFlavorData()
+
+	def _calcTotalSize(self):
 		offset = self.directorySize
 		for entry in self.tables.values():
 			offset += len(entry.toString())
 		offset += self.totalCompressedSize
 		offset = (offset + 3) & ~3
-		offset = self._calcMetaAndPrivDataSize(offset)
+		offset = self._calcFlavorDataOffsetsAndSize(offset)
 		return offset
 
 	def _writeDirectory(self):
@@ -686,101 +756,6 @@ class WOFFDirectoryEntry(DirectoryEntry):
 			return data
 		else:
 			return compressedData
-
-
-class WOFFFlavorData(object):
-
-	_flavor = None
-
-	def __init__(self, reader=None, flavor='woff'):
-		self.majorVersion = None
-		self.minorVersion = None
-		self.metaData = None
-		self.privData = None
-		self.flavor = reader.flavor if reader else flavor
-		if reader:
-			self.majorVersion = reader.majorVersion
-			self.minorVersion = reader.minorVersion
-			if reader.metaLength:
-				self.loadMetaData(
-					reader.file, reader.metaOffset, reader.metaLength,
-					reader.metaOrigLength, compressed=True)
-			if reader.privLength:
-				self.loadPrivData(
-					reader.file, reader.privOffset, reader.privLength)
-
-	@property
-	def flavor(self):
-		return self._flavor
-
-	@flavor.setter
-	def flavor(self, value):
-		if value not in ('woff', 'woff2'):
-			raise TTLibError("Unknown flavor '%s'" % value)
-		if value == "woff":
-			import zlib
-			self.compress = zlib.compress
-			self.decompress = zlib.decompress
-		elif value == "woff2":
-			import brotli
-			self.compress = brotli.compress
-			self.decompress = brotli.decompress
-		self._flavor = value
-
-	def loadMetaData(self, file, offset=None, length=None, origLength=None,
-			compressed=True):
-		data = self.loadData(file, offset, length, compressed)
-		if compressed and origLength is not None:
-			assert len(data) == origLength
-		self.metaData = data
-		return self.metaData
-
-	def loadPrivData(self, file, offset=None, length=None):
-		data = self.loadData(file, offset, length)
-		self.privData = data
-		return self.privData
-
-	def saveMetaData(self, file, offset=None, compressed=True):
-		data = self.metaData
-		return self.saveData(file, data, offset, compressed)
-
-	def savePrivData(self, file, offset=None):
-		data = self.privData
-		return self.saveData(file, data, offset)
-
-	def loadData(self, file, offset=None, length=None, compressed=False):
-		if not hasattr(file, 'read'):
-			closeStream = True
-			file = open(file, 'rb')
-		else:
-			closeStream = False
-		if offset is not None:
-			file.seek(offset)
-		if length is not None:
-			data = file.read(length)
-			assert len(data) == length
-		else:
-			data = file.read()
-		if compressed:
-			data = self.decompress(data)
-		if closeStream:
-			file.close()
-		return data
-
-	def saveData(self, file, data, offset=None, compressed=False):
-		if not hasattr(file, 'write'):
-			closeStream = True
-			file = open(file, 'wb')
-		else:
-			closeStream = False
-		if offset is not None:
-			file.seek(offset)
-		if compressed:
-			data = self.compress(data)
-		file.write(data)
-		if closeStream:
-			file.close()
-		return len(data)
 
 
 def calcChecksum(data):
