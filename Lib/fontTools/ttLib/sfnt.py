@@ -358,24 +358,18 @@ class WOFFWriter(SFNTWriter):
 	def __init__(self, file, numTables, sfntVersion="\000\001\000\000",
 		         flavorData=None):
 		super(WOFFWriter, self).__init__(file, numTables, sfntVersion)
-		self.setFlavorData(flavorData)
+
+		self.flavorData = self._newFlavorData()
+		if flavorData is not None:
+			if not isinstance(flavorData, WOFFFlavorData):
+				raise TypeError("expected WOFFFlavorData, found %s" % type(flavorData))
+			# make a copy instead of replacing, to exchange data between WOFF/WOFF2
+			self.flavorData.__dict__.update(flavorData.__dict__)
 
 	def _setDirectoryFormat(self):
 		self.directoryFormat = woffDirectoryFormat
 		self.directorySize = woffDirectorySize
 		self.DirectoryEntry = WOFFDirectoryEntry
-
-	def setFlavorData(self, flavorData=None):
-		"""Set self.flavorData to new instance of *FlavorData. If the specified
-		value is not None, update flavorData."""
-		self.flavorData = self._newFlavorData()
-		if flavorData is None:
-			return
-		if not isinstance(flavorData, WOFFFlavorData):
-			raise TypeError("expected WOFFFlavorData, found %s" % type(flavorData))
-		# make shallow copy instead of replacing, so one can exchange instances
-		# between WOFF and WOFF2
-		self.flavorData.__dict__.update(flavorData.__dict__)
 
 	def _newFlavorData(self):
 		return WOFFFlavorData()
