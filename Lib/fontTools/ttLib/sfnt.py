@@ -310,18 +310,10 @@ class SFNTWriter(object):
 	def close(self):
 		"""All tables must have been written to disk. Now write the directory."""
 		self._assertNumTables()
-		self._writeDirectory()
 
-	def _assertNumTables(self):
-		if len(self.tables) != self.numTables:
-			raise TTLibError("wrong number of tables; expected %d, found %d" % (
-				self.numTables, len(self.tables)))
-
-	def _writeDirectory(self):
 		# SFNT table directory must be sorted alphabetically by tag
 		tables = sorted(self.tables.items())
 		directory = sstruct.pack(self.directoryFormat, self)
-
 		seenHead = 0
 		for tag, entry in tables:
 			if tag == "head":
@@ -331,6 +323,11 @@ class SFNTWriter(object):
 			self._writeMasterChecksum(directory)
 		self.file.seek(0)
 		self.file.write(directory)
+
+	def _assertNumTables(self):
+		if len(self.tables) != self.numTables:
+			raise TTLibError("wrong number of tables; expected %d, found %d" % (
+				self.numTables, len(self.tables)))
 
 	def _writeMasterChecksum(self, directory):
 		checksumadjustment = self._calcMasterChecksum(directory)
@@ -392,7 +389,8 @@ class WOFFWriter(SFNTWriter):
 		self.majorVersion, self.minorVersion = self._getVersion()
 		self.length = self._calcTotalSize()
 
-		self._writeDirectory()
+		super(WOFFWriter, self).close()
+
 		self._writeFlavorData()
 
 	def _calcSftnSize(self):
@@ -425,7 +423,7 @@ class WOFFWriter(SFNTWriter):
 
 	def _calcFlavorDataOffsetsAndSize(self, offset):
 		""" Calculate offsets and lengths for any metadata and/or private data,
-		starting from specified 'offset'. Return offset incremented by data length.
+		starting from specified end of file. Return offset incremented by data size.
 		"""
 		data = self.flavorData
 		if data.metaData:
@@ -523,6 +521,8 @@ class WOFF2Writer(WOFFWriter):
 	def close(self):
 		""" All tags must have been specified. Now write the table data and directory.
 		"""
+		self._assertNumTables()
+
 		# to pass the legacy OpenType Sanitiser currently included in browsers,
 		# we must sort the table directory and data alphabetically by tag.
 		# See:
@@ -531,20 +531,11 @@ class WOFF2Writer(WOFFWriter):
 		# TODO(user): change to match spec once browsers are on newer OTS
 		self.tables = OrderedDict(sorted(self.tables.items(), key=lambda i: i[0]))
 
-		self._assertNumTables()
-
 		# transform glyf and loca table data
 		for tag, entry in self.tables.items():
-			if tag == "loca":
-				data = b""
-			elif tag == "glyf":
-				indexFormat, = struct.unpack(">H", self.tables['head'].data[50:52])
-				numGlyphs, = struct.unpack(">H", self.tables['maxp'].data[4:6])
-				glyfTable = WOFF2GlyfTable()
-				glyfTable.setLocaData(self.tables['loca'].data, indexFormat, numGlyphs)
-				data = glyfTable.transform(entry.data)
-			else:
-				data = entry.data
+			data = entry.data
+			if tag in woff2TransformedTableTags:
+				data = self.transform(tag, data)
 			# write tables to transformBuffer
 			entry.offset = self.nextTableOffset
 			entry.saveData(self.transformBuffer, data)
@@ -583,14 +574,26 @@ class WOFF2Writer(WOFFWriter):
 		offset = self._calcFlavorDataOffsetsAndSize(offset)
 		return offset
 
-	def _writeDirectory(self):
-		raise NotImplementedError
-
 	def _writeMasterChecksum(self):
 		checksumadjustment = self._calcMasterChecksum(b"")
 		# write the checksum to the transformBuffer
 		self.transformBuffer.seek(self.tables['head'].offset + 8)
 		self.transformBuffer.write(struct.pack(">L", checksumadjustment))
+
+	def transform(self, tag, data):
+		if tag not in woff2TransformedTableTags:
+			raise TTLibError("Transform for table '%s' is unknown" % tag)
+		if tag == "loca":
+			data = b""
+		elif tag == "glyf":
+			indexFormat, = struct.unpack(">H", self.tables['head'].data[50:52])
+			numGlyphs, = struct.unpack(">H", self.tables['maxp'].data[4:6])
+			glyfTable = WOFF2GlyfTable()
+			glyfTable.setLocaData(self.tables['loca'].data, indexFormat, numGlyphs)
+			data = glyfTable.transform(entry.data)
+		else:
+			raise NotImplementedError
+		return data
 
 
 # -- sfnt directory helpers and cruft
