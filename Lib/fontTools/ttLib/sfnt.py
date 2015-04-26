@@ -363,7 +363,7 @@ class WOFFWriter(SFNTWriter):
 		if flavorData is not None:
 			if not isinstance(flavorData, WOFFFlavorData):
 				raise TypeError("expected WOFFFlavorData, found %s" % type(flavorData))
-			# copy instead of replacing, to exchange flavorData between WOFF/WOFF2
+			# copy instead of replacing flavorData, to exchange between WOFF/WOFF2
 			self.flavorData.__dict__.update(flavorData.__dict__)
 
 	def _setDirectoryFormat(self):
