@@ -284,17 +284,16 @@ class SFNTWriter(object):
 			raise TTLibError("cannot rewrite '%s' table" % tag)
 
 		entry = self.DirectoryEntry()
-		entry.tag = Tag(tag)
-		self.tables[tag] = entry
-
+		entry.tag = tag
 		if tag == 'head':
 			entry.checkSum = calcChecksum(data[:8] + b'\0\0\0\0' + data[12:])
 			self.headTable = data
 			entry.uncompressed = True
 		else:
 			entry.checkSum = calcChecksum(data)
-
 		self._writeTable(entry, data)
+
+		self.tables[tag] = entry
 
 	def _writeTable(self, entry, data):
 		entry.offset = self.nextTableOffset
