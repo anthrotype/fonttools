@@ -271,7 +271,6 @@ class SFNTWriter(object):
 		self.searchRange, self.entrySelector, self.rangeShift = getSearchRange(self.numTables, 16)
 
 	def _seekFirstTable(self):
-		assert self.directorySize and self.DirectoryEntry
 		self.nextTableOffset = self.directorySize + self.numTables * self.DirectoryEntry.formatSize
 		# clear out directory area
 		self.file.seek(self.nextTableOffset)
@@ -418,10 +417,12 @@ class WOFFWriter(SFNTWriter):
 		if data.metaData:
 			self.metaOrigLength = len(data.metaData)
 			self.metaOffset = offset
-			self.metaLength = len(data.compressedMetaData)
+			self.compressedMetaData = data.encodeData(data.metaData)
+			self.metaLength = len(self.compressedMetaData)
 			offset += self.metaLength
 		else:
 			self.metaOffset = self.metaLength = self.metaOrigLength = 0
+			self.compressedMetaData = b""
 		if data.privData:
 			# make sure private data is padded to 4-byte boundary
 			offset = (offset + 3) & ~3
@@ -434,7 +435,7 @@ class WOFFWriter(SFNTWriter):
 
 	def _writeFlavorData(self):
 		# write any metadata and/or private data using appropriate padding
-		compressedMetaData = self.flavorData.compressedMetaData
+		compressedMetaData = self.compressedMetaData
 		privData = self.flavorData.privData
 		if compressedMetaData and privData:
 			compressedMetaData = padData(compressedMetaData)
@@ -753,10 +754,6 @@ class WOFFFlavorData(object):
 	def encodeData(self, data):
 		import zlib
 		return zlib.compress(data)
-
-	@property
-	def compressedMetaData(self):
-		return self.encodeData(self.metaData) if self.metaData else b""
 
 
 class WOFF2FlavorData(WOFFFlavorData):
