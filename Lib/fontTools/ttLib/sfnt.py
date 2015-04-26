@@ -26,9 +26,9 @@ from fontTools.misc import sstruct
 from fontTools.misc.arrayTools import calcIntBounds
 
 
-class FlavorData(object):
+class WOFFFlavorData(object):
 
-	flavor = None
+	flavor = "woff"
 
 	def __init__(self, reader=None):
 		self.majorVersion = None
@@ -52,21 +52,6 @@ class FlavorData(object):
 				self.privData = data
 
 	def decodeData(self, rawData):
-		raise NotImplementedError
-
-	def encodeData(self, data):
-		raise NotImplementedError
-
-	@property
-	def compressedMetaData(self):
-		return self.encodeData(self.metaData) if self.metaData else b""
-
-
-class WOFFFlavorData(FlavorData):
-
-	flavor = "woff"
-
-	def decodeData(self, rawData):
 		import zlib
 		return zlib.decompress(rawData)
 
@@ -74,8 +59,12 @@ class WOFFFlavorData(FlavorData):
 		import zlib
 		return zlib.compress(data)
 
+	@property
+	def compressedMetaData(self):
+		return self.encodeData(self.metaData) if self.metaData else b""
 
-class WOFF2FlavorData(FlavorData):
+
+class WOFF2FlavorData(WOFFFlavorData):
 
 	flavor = "woff2"
 
@@ -411,8 +400,8 @@ class WOFFWriter(SFNTWriter):
 
 		self.flavorData = self.FlavorData()
 		if flavorData is not None:
-			if not isinstance(flavorData, FlavorData):
-				raise TypeError("expected FlavorData, found %s" % type(flavorData))
+			if not isinstance(flavorData, WOFFFlavorData):
+				raise TypeError("expected WOFFFlavorData, found %s" % type(flavorData))
 			# make shallow copy of flavorData attributes
 			self.flavorData.__dict__.update(flavorData.__dict__)
 
