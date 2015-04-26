@@ -400,14 +400,14 @@ class WOFFWriter(SFNTWriter):
 		if data.majorVersion is not None and data.minorVersion is not None:
 			return data.majorVersion, data.minorVersion
 		else:
-			# if None, return 'fontRevision' from 'head' table
+			# if None, return 'fontRevision' from 'head' table
 			if hasattr(self, 'headTable'):
 				return struct.unpack(">HH", self.headTable[4:8])
 			else:
 				return 0, 0
 
 	def _calcTotalSize(self):
-		# calculate total size of WOFF font, including any meta- or private data
+		# calculate total size of WOFF font, including any meta or private data
 		offset = self.directorySize + self.DirectoryEntry.formatSize * len(self.tables)
 		for entry in self.tables.values():
 			offset += (entry.length + 3) & ~3
@@ -415,12 +415,12 @@ class WOFFWriter(SFNTWriter):
 		return offset
 
 	def _calcFlavorDataOffsetsAndSize(self, offset):
-		# calculate offsets and lengths for any meta- and/or private data
+		# calculate offsets and lengths for any meta or private data
 		data = self.flavorData
 		if data.metaData:
 			self.metaOrigLength = len(data.metaData)
 			self.metaOffset = offset
-			# compress metaData using zlib (WOFF) or brotli (WOFF2)
+			# compress metaData using zlib (WOFF) or brotli (WOFF2)
 			self.compressedMetaData = data.encodeData(data.metaData)
 			self.metaLength = len(self.compressedMetaData)
 			offset += self.metaLength
@@ -557,7 +557,7 @@ class WOFF2Writer(WOFFWriter):
 		self._writeFlavorData()
 
 	def _calcTotalSize(self):
-		# calculate total size of WOFF2 font, including any meta- or private data
+		# calculate total size of WOFF2 font, including any meta- or private data
 		offset = self.directorySize
 		for entry in self.tables.values():
 			offset += len(entry.toString())
