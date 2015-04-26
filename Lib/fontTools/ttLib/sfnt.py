@@ -264,11 +264,15 @@ class WOFF2Reader(WOFFReader):
 		# WOFF2 doesn't store table checksums so we can't validate them
 		if tag not in woff2TransformedTableTags:
 			return rawData
-
 		if hasattr(entry, 'data'):
 			# table already reconstructed, return compiled data
 			return entry.data
+		entry.data = self._reconstructTransformed(tag, rawData)
+		return data
 
+	def _reconstructTransformed(self, tag, rawData):
+		if tag not in woff2TransformedTableTags:
+			raise TTLibError("Transform for table '%s' is unknown" % tag)
 		if tag == 'glyf':
 			# reconstruct both glyf and loca
 			self.glyfTable = WOFF2GlyfTable()
@@ -283,8 +287,8 @@ class WOFF2Reader(WOFFReader):
 				raise TTLibError(
 					"reconstructed '%s' table doesn't match original size: expected %d, found %d"
 					% (tag, entry.origLength, len(data)))
-		entry.data = data
-		return data
+		else:
+			raise NotImplementedError
 
 
 class SFNTWriter(object):
