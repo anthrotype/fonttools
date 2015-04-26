@@ -519,7 +519,9 @@ class WOFF2Writer(WOFFWriter):
 		entry.data = data
 
 	def close(self):
-		""" All tags must have been specified. Now write the table data and directory.
+		""" All tags must have been specified. Now transform the 'glyf' and 'loca'
+		tables, compress the table data, and write directory and table data to disk.
+		Optionally write any metadata and/or private data.
 		"""
 		self._assertNumTables()
 
@@ -531,12 +533,12 @@ class WOFF2Writer(WOFFWriter):
 		# TODO(user): change to match spec once browsers are on newer OTS
 		self.tables = OrderedDict(sorted(self.tables.items(), key=lambda i: i[0]))
 
-		# transform glyf and loca table data
+		# write table data to transformBuffer
 		for tag, entry in self.tables.items():
 			data = entry.data
 			if tag in woff2TransformedTableTags:
+				# transform glyf and loca tables
 				data = self.transformTable(tag, data)
-			# write tables to transformBuffer
 			entry.offset = self.nextTableOffset
 			entry.saveData(self.transformBuffer, data)
 			self.nextTableOffset += entry.length
