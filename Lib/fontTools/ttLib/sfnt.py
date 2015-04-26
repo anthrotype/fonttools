@@ -592,7 +592,7 @@ class WOFF2Writer(WOFFWriter):
 			numGlyphs, = struct.unpack(">H", self.tables['maxp'].data[4:6])
 			glyfTable = WOFF2GlyfTable()
 			glyfTable.setLocaData(self.tables['loca'].data, indexFormat, numGlyphs)
-			data = glyfTable.transform(entry.data)
+			data = glyfTable.transform(data)
 		else:
 			raise NotImplementedError
 		return data
