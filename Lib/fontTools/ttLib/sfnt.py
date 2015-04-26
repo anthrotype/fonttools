@@ -462,17 +462,15 @@ class WOFFWriter(SFNTWriter):
 			assert self.file.tell() == self.privOffset
 			self.file.write(privData)
 
-	def _writeMasterChecksum(self, directory):
+	def _calcMasterChecksum(self, directory):
 		"""Create a dummy SFNT directory before calculating checkSumAdjustment."""
 		directory = self._makeDummySFNTDirectory()
-		super(WOFFWriter, self)._writeMasterChecksum(directory)
+		return super(WOFFWriter, self)._calcMasterChecksum(directory)
 
 	def _makeDummySFNTDirectory(self):
 		""" Compute the 'original' SFNT table offsets given the current table order. 
 		Return the corresponding SFNT directory.
 		"""
-		assert self.flavor in ('woff', 'woff2'), "unsupported flavor"
-
 		offset = sfntDirectorySize + sfntDirectoryEntrySize * len(self.tables)
 		# must be an OrderedDict!
 		for entry in self.tables.values():
@@ -589,8 +587,7 @@ class WOFF2Writer(WOFFWriter):
 		raise NotImplementedError
 
 	def _writeMasterChecksum(self):
-		directory = self._makeDummySFNTDirectory()
-		checksumadjustment = self._calcMasterChecksum(directory)
+		checksumadjustment = self._calcMasterChecksum(b"")
 		# write the checksum to the transformBuffer
 		self.transformBuffer.seek(self.tables['head'].offset + 8)
 		self.transformBuffer.write(struct.pack(">L", checksumadjustment))
