@@ -259,16 +259,22 @@ class WOFF2Reader(WOFFReader):
 
 	def __getitem__(self, tag):
 		"""Fetch the raw table data. Reconstruct transformed 'glyf' and 'loca'."""
-		entry = self.tables[Tag(tag)]
+		tag = Tag(tag)
+		entry = self.tables[tag]
 		rawData = entry.loadData(self.transformBuffer)
 		# WOFF2 doesn't store table checksums so we can't validate them
 		if tag not in woff2TransformedTableTags:
 			return rawData
 		if hasattr(entry, 'data'):
-			# table already reconstructed, return compiled data
+			# already reconstructed
 			return entry.data
-		entry.data = self._reconstructTransformed(tag, rawData)
-		return data
+		data = self._reconstructTransformed(tag, rawData)
+		if tag == 'loca' and len(data) != entry.origLength:
+			raise TTLibError(
+				"reconstructed 'loca' table doesn't match original size: expected %d, found %d"
+				% (entry.origLength, len(data)))
+		entry.data = data
+		return entry.data
 
 	def _reconstructTransformed(self, tag, rawData):
 		if tag not in woff2TransformedTableTags:
@@ -283,12 +289,9 @@ class WOFF2Reader(WOFFReader):
 				# make sure glyf is loaded first
 				self['glyf']
 			data = self.glyfTable.getLocaData()
-			if len(data) != entry.origLength:
-				raise TTLibError(
-					"reconstructed '%s' table doesn't match original size: expected %d, found %d"
-					% (tag, entry.origLength, len(data)))
 		else:
 			raise NotImplementedError
+		return data
 
 
 class SFNTWriter(object):
