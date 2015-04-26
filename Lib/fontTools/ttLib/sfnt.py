@@ -51,6 +51,7 @@ class SFNTReader(object):
 		self.DirectoryEntry = SFNTDirectoryEntry
 
 	def isCollection(self):
+		"""Return True if file has 'ttcf' tag."""
 		currOffset = self.file.tell()
 		self.file.seek(0)
 		ttcTag = self.file.read(4)
@@ -58,6 +59,7 @@ class SFNTReader(object):
 		return ttcTag == b"ttcf"
 
 	def seekOffsetTable(self, fontNumber):
+		"""Move current position to the offset table of font 'fontNumber'."""
 		if not self.isCollection():
 			raise TTLibError("Not a Font Collection (bad TTCTag)")
 		if not hasattr(self, 'numFonts'):
@@ -135,14 +137,21 @@ class SFNTReader(object):
 
 	@property
 	def tableOrder(self):
+		"""Return list of table tags sorted by offset."""
 		return sorted(self.tables.keys(), key=lambda t: self.tables[t].offset)
 
 
 class WOFFReader(SFNTReader):
 
 	flavor = "woff"
+	signature = b"wOFF"
 
 	def __init__(self, file, checkChecksums=1, fontNumber=-1):
+		signature = Tag(file.read(4))
+		file.seek(0)
+		if signature != self.signature:
+			raise TTLibError("Not a %s font (bad signature)" % self.flavor.upper())
+
 		super(WOFFReader, self).__init__(file, checkChecksums, fontNumber)
 
 		self.file.seek(0, 2)
@@ -152,11 +161,6 @@ class WOFFReader(SFNTReader):
 		self._readFlavorData()
 
 	def _setDirectoryFormat(self):
-		signature = self.file.read(4)
-		self.file.seek(0)
-		if signature != b"wOFF":
-			raise TTLibError("Not a WOFF font (bad signature)")
-
 		self.directoryFormat = woffDirectoryFormat
 		self.directorySize = woffDirectorySize
 		self.DirectoryEntry = WOFFDirectoryEntry
@@ -168,11 +172,12 @@ class WOFFReader(SFNTReader):
 class WOFF2Reader(WOFFReader):
 
 	flavor = "woff2"
+	signature = b"wOF2"
 
 	def __init__(self, file):
 		super(WOFF2Reader, self).__init__(file)
 
-		# decompress font data stream
+		# decompress font data
 		self.file.seek(self.compressedDataOffset)
 		compressedData = self.file.read(self.totalCompressedSize)
 		import brotli
@@ -182,40 +187,35 @@ class WOFF2Reader(WOFFReader):
 			raise TTLibError(
 				'unexpected size for decompressed font data: expected %d, found %d'
 				% (totalUncompressedSize, len(decompressedData)))
+		# write decompressed data to temporary buffer
 		self.transformBuffer = StringIO(decompressedData)
 
 	def _setDirectoryFormat(self):
-		signature = self.file.read(4)
-		self.file.seek(0)
-		if signature != b"wOF2":
-			raise TTLibError("Not a WOFF2 font (bad signature)")
-
 		self.directoryFormat = woff2DirectoryFormat
 		self.directorySize = woff2DirectorySize
 		self.DirectoryEntry = WOFF2DirectoryEntry
 
 	def _readDirectoryEntries(self):
-		# calculate offsets to tables in the uncompressed 'transformBuffer'
 		self.tables = {}
+		# calculate offsets to individual tables inside 'transformBuffer'
 		offset = 0
 		for i in range(self.numTables):
 			entry = self.DirectoryEntry()
 			entry.fromFile(self.file)
-			self.tables[Tag(entry.tag)] = entry
 			entry.offset = offset
+			self.tables[Tag(entry.tag)] = entry
 			offset += entry.length
-		# compressed font data starts at the end of variable-length directory
+		# compressed font data starts at the end of variable-length table directory
 		self.compressedDataOffset = self.file.tell()
 
 	def _readFlavorData(self):
 		self.flavorData = WOFF2FlavorData(self)
 
 	def __getitem__(self, tag):
-		"""Fetch the raw table data. Reconstruct transformed 'glyf' and 'loca'."""
+		"""Fetch the raw table data. Reconstruct transformed tables."""
 		tag = Tag(tag)
 		entry = self.tables[tag]
 		rawData = entry.loadData(self.transformBuffer)
-		# WOFF2 doesn't store table checksums so we can't validate them
 		if tag not in woff2TransformedTableTags:
 			return rawData
 		if hasattr(entry, 'data'):
@@ -230,6 +230,7 @@ class WOFF2Reader(WOFFReader):
 		return entry.data
 
 	def reconstructTable(self, tag, rawData):
+		"""Reconstruct 'glyf' or 'loca' tables from transformed 'rawData'."""
 		if tag not in woff2TransformedTableTags:
 			raise TTLibError("Transform for table '%s' is unknown" % tag)
 		if tag == 'glyf':
