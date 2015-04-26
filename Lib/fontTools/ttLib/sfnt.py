@@ -259,7 +259,7 @@ class SFNTWriter(object):
 		self.sfntVersion = Tag(sfntVersion)
 		self.flavorData = flavorData
 
-		self.tables = OrderedDict()
+		self.tables = OrderedDict()  # keep track of insertion order
 
 		self._setDirectoryFormat()
 		self._seekFirstTable()
@@ -383,6 +383,7 @@ class WOFFWriter(SFNTWriter):
 		self.majorVersion, self.minorVersion = self._getVersion()
 		self.length = self._calcTotalSize()
 
+		# write table directory
 		super(WOFFWriter, self).close()
 
 		self._writeFlavorData()
