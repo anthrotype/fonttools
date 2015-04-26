@@ -217,6 +217,10 @@ class WOFF2Reader(WOFFReader):
 	def __init__(self, file):
 		super(WOFF2Reader, self).__init__(file)
 
+		self.file.seek(0, 2)
+		if self.length != self.file.tell():
+			raise TTLibError("reported 'length' doesn't match the actual file size")
+
 		# decompress font data stream
 		self.file.seek(self.compressedDataOffset)
 		compressedData = self.file.read(self.totalCompressedSize)
