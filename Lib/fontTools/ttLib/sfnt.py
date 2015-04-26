@@ -389,12 +389,16 @@ class WOFFWriter(SFNTWriter):
 		self._writeFlavorData()
 
 	def _calcSftnSize(self):
+		"""Return total size of uncompressed SFNT font."""
 		size = sfntDirectorySize + sfntDirectoryEntrySize * len(self.tables)
 		for entry in self.tables.values():
 			size += (entry.origLength + 3) & ~3
 		return size
 
 	def getVersion(self):
+		""" Return (majorVersion, minorVersion) tuple for WOFF font as specified in
+		'flavorData' attribute. If None, return version from 'head' table.
+		"""
 		data = self.flavorData
 		if data.majorVersion is not None and data.minorVersion is not None:
 			return data.majorVersion, data.minorVersion
@@ -405,6 +409,7 @@ class WOFFWriter(SFNTWriter):
 				return 0, 0
 
 	def _calcTotalSize(self):
+		"""Calculate total size of WOFF font, including any meta- or private data."""
 		offset = self.directorySize + self.DirectoryEntry.formatSize * len(self.tables)
 		for entry in self.tables.values():
 			offset += (entry.length + 3) & ~3
@@ -412,7 +417,9 @@ class WOFFWriter(SFNTWriter):
 		return offset
 
 	def _calcFlavorDataOffsetsAndSize(self, offset):
-		# calculate offsets and lengths for any metadata and/or private data
+		""" Calculate offsets and lengths for any metadata and/or private data
+		starting at specified 'offset'. Return offset incremented by data length.
+		"""
 		data = self.flavorData
 		if data.metaData:
 			self.metaOrigLength = len(data.metaData)
@@ -434,7 +441,7 @@ class WOFFWriter(SFNTWriter):
 		return offset
 
 	def _writeFlavorData(self):
-		# write any metadata and/or private data using appropriate padding
+		"""Write any metadata and/or private data to disk using appropriate padding."""
 		compressedMetaData = self.compressedMetaData
 		privData = self.flavorData.privData
 		if compressedMetaData and privData:
@@ -449,14 +456,16 @@ class WOFFWriter(SFNTWriter):
 			self.file.write(privData)
 
 	def writeMasterChecksum(self, directory):
+		"""Create a dummy SFNT directory before calculating checkSumAdjustment."""
 		directory = self._makeDummySFNTDirectory()
 		super(WOFFWriter, self).writeMasterChecksum(directory)
 
 	def _makeDummySFNTDirectory(self):
-		"""Create dummy SFNT directory for WOFF/WOFF2 checksum calculation."""
+		""" Compute the 'original' SFNT table offsets given the current table order. 
+		Return the corresponding SFNT directory.
+		"""
 		assert self.flavor in ('woff', 'woff2'), "unsupported flavor"
 
-		# compute the original SFNT offsets
 		offset = sfntDirectorySize + sfntDirectoryEntrySize * len(self.tables)
 		for entry in self.tables.values():
 			entry.origOffset = offset
@@ -466,6 +475,7 @@ class WOFFWriter(SFNTWriter):
 			len(self.tables), 16)
 		directory = sstruct.pack(sfntDirectoryFormat, self)
 		for tag, entry in sorted(self.tables.items()):
+			assert hasattr(entry, 'origLength')
 			sfntEntry = SFNTDirectoryEntry()
 			sfntEntry.tag = entry.tag
 			sfntEntry.checkSum = entry.checkSum
