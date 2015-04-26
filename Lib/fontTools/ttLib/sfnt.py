@@ -26,57 +26,6 @@ from fontTools.misc import sstruct
 from fontTools.misc.arrayTools import calcIntBounds
 
 
-class WOFFFlavorData(object):
-
-	flavor = "woff"
-
-	def __init__(self, reader=None):
-		self.majorVersion = None
-		self.minorVersion = None
-		self.metaData = b""
-		self.privData = b""
-		if reader:
-			self.majorVersion = reader.majorVersion
-			self.minorVersion = reader.minorVersion
-			if reader.metaLength:
-				reader.file.seek(reader.metaOffset)
-				rawData = reader.file.read(reader.metaLength)
-				assert len(rawData) == reader.metaLength
-				data = self.decodeData(rawData)
-				assert len(data) == reader.metaOrigLength
-				self.metaData = data
-			if reader.privLength:
-				reader.file.seek(reader.privOffset)
-				data = reader.file.read(reader.privLength)
-				assert len(data) == reader.privLength
-				self.privData = data
-
-	def decodeData(self, rawData):
-		import zlib
-		return zlib.decompress(rawData)
-
-	def encodeData(self, data):
-		import zlib
-		return zlib.compress(data)
-
-	@property
-	def compressedMetaData(self):
-		return self.encodeData(self.metaData) if self.metaData else b""
-
-
-class WOFF2FlavorData(WOFFFlavorData):
-
-	flavor = "woff2"
-
-	def decodeData(self, rawData):
-		import brotli
-		return brotli.decompress(rawData)
-
-	def encodeData(self, data):
-		import brotli
-		return brotli.compress(data)
-
-
 class SFNTReader(object):
 
 	flavor = None
@@ -87,7 +36,7 @@ class SFNTReader(object):
 		self.fontNumber = fontNumber
 		self.flavorData = None
 
-		self._setupDirectory()
+		self._setDirectoryFormat()
 
 		if self.isCollection():
 			self.seekOffsetTable(fontNumber)
@@ -96,7 +45,7 @@ class SFNTReader(object):
 
 		self.readDirectory()
 
-	def _setupDirectory(self):
+	def _setDirectoryFormat(self):
 		self.directoryFormat = sfntDirectoryFormat
 		self.directorySize = sfntDirectorySize
 		self.DirectoryEntry = SFNTDirectoryEntry
@@ -192,7 +141,6 @@ class SFNTReader(object):
 class WOFFReader(SFNTReader):
 
 	flavor = "woff"
-	FlavorData = WOFFFlavorData
 
 	def __init__(self, file, checkChecksums=1, fontNumber=-1):
 		super(WOFFReader, self).__init__(file, checkChecksums, fontNumber)
@@ -201,9 +149,9 @@ class WOFFReader(SFNTReader):
 		if self.length != self.file.tell():
 			raise TTLibError("reported 'length' doesn't match the actual file size")
 
-		self.flavorData = self.FlavorData(self)
+		self._readFlavorData()
 
-	def _setupDirectory(self):
+	def _setDirectoryFormat(self):
 		signature = self.file.read(4)
 		self.file.seek(0)
 		if signature != b"wOFF":
@@ -213,11 +161,13 @@ class WOFFReader(SFNTReader):
 		self.directorySize = woffDirectorySize
 		self.DirectoryEntry = WOFFDirectoryEntry
 
+	def _readFlavorData(self):
+		self.flavorData = WOFFFlavorData(self)
+
 
 class WOFF2Reader(WOFFReader):
 
 	flavor = "woff2"
-	FlavorData = WOFF2FlavorData
 
 	def __init__(self, file):
 		super(WOFF2Reader, self).__init__(file)
@@ -234,7 +184,7 @@ class WOFF2Reader(WOFFReader):
 				% (totalUncompressedSize, len(decompressedData)))
 		self.transformBuffer = StringIO(decompressedData)
 
-	def _setupDirectory(self):
+	def _setDirectoryFormat(self):
 		signature = self.file.read(4)
 		self.file.seek(0)
 		if signature != b"wOF2":
@@ -256,6 +206,9 @@ class WOFF2Reader(WOFFReader):
 			offset += entry.length
 		# compressed font data starts at the end of variable-length directory
 		self.compressedDataOffset = self.file.tell()
+
+	def _readFlavorData(self):
+		self.flavorData = WOFF2FlavorData(self)
 
 	def __getitem__(self, tag):
 		"""Fetch the raw table data. Reconstruct transformed 'glyf' and 'loca'."""
@@ -306,10 +259,11 @@ class SFNTWriter(object):
 		self.flavorData = flavorData
 
 		self.tables = OrderedDict()
-		self._setupDirectory()
+
+		self._setDirectoryFormat()
 		self._seekFirstTable()
 
-	def _setupDirectory(self):
+	def _setDirectoryFormat(self):
 		self.directoryFormat = sfntDirectoryFormat
 		self.directorySize = sfntDirectorySize
 		self.DirectoryEntry = SFNTDirectoryEntry
@@ -404,23 +358,24 @@ class SFNTWriter(object):
 class WOFFWriter(SFNTWriter):
 
 	flavor = 'woff'
-	FlavorData = WOFFFlavorData
 
 	def __init__(self, file, numTables, sfntVersion="\000\001\000\000",
 		         flavorData=None):
 		super(WOFFWriter, self).__init__(file, numTables, sfntVersion)
+		self._setFlavorData(flavorData)
 
-		self.flavorData = self.FlavorData()
+	def _setDirectoryFormat(self):
+		self.directoryFormat = woffDirectoryFormat
+		self.directorySize = woffDirectorySize
+		self.DirectoryEntry = WOFFDirectoryEntry
+
+	def _setFlavorData(self, flavorData):
+		self.flavorData = WOFFFlavorData()
 		if flavorData is not None:
 			if not isinstance(flavorData, WOFFFlavorData):
 				raise TypeError("expected WOFFFlavorData, found %s" % type(flavorData))
 			# make shallow copy of flavorData attributes
 			self.flavorData.__dict__.update(flavorData.__dict__)
-
-	def _setupDirectory(self):
-		self.directoryFormat = woffDirectoryFormat
-		self.directorySize = woffDirectorySize
-		self.DirectoryEntry = WOFFDirectoryEntry
 
 	def close(self):
 		self._assertNumTables()
@@ -522,9 +477,8 @@ class WOFFWriter(SFNTWriter):
 class WOFF2Writer(WOFFWriter):
 
 	flavor = 'woff2'
-	FlavorData = WOFF2FlavorData
 
-	def _setupDirectory(self):
+	def _setDirectoryFormat(self):
 		self.directoryFormat = woff2DirectoryFormat
 		self.directorySize = woff2DirectorySize
 		self.DirectoryEntry = WOFF2DirectoryEntry
@@ -533,6 +487,14 @@ class WOFF2Writer(WOFFWriter):
 		"""Initialise empty transformBuffer."""
 		self.nextTableOffset = 0
 		self.transformBuffer = StringIO()
+
+	def _setFlavorData(self, flavorData):
+		self.flavorData = WOFF2FlavorData()
+		if flavorData is not None:
+			if not isinstance(flavorData, WOFFFlavorData):
+				raise TypeError("expected WOFFFlavorData, found %s" % type(flavorData))
+			# make shallow copy of flavorData attributes
+			self.flavorData.__dict__.update(flavorData.__dict__)
 
 	def __setitem__(self, tag, data):
 		"""Associate new entry named 'tag' with raw table data."""
@@ -757,6 +719,57 @@ class WOFFDirectoryEntry(DirectoryEntry):
 			return data
 		else:
 			return compressedData
+
+
+class WOFFFlavorData(object):
+
+	flavor = "woff"
+
+	def __init__(self, reader=None):
+		self.majorVersion = None
+		self.minorVersion = None
+		self.metaData = b""
+		self.privData = b""
+		if reader:
+			self.majorVersion = reader.majorVersion
+			self.minorVersion = reader.minorVersion
+			if reader.metaLength:
+				reader.file.seek(reader.metaOffset)
+				rawData = reader.file.read(reader.metaLength)
+				assert len(rawData) == reader.metaLength
+				data = self.decodeData(rawData)
+				assert len(data) == reader.metaOrigLength
+				self.metaData = data
+			if reader.privLength:
+				reader.file.seek(reader.privOffset)
+				data = reader.file.read(reader.privLength)
+				assert len(data) == reader.privLength
+				self.privData = data
+
+	def decodeData(self, rawData):
+		import zlib
+		return zlib.decompress(rawData)
+
+	def encodeData(self, data):
+		import zlib
+		return zlib.compress(data)
+
+	@property
+	def compressedMetaData(self):
+		return self.encodeData(self.metaData) if self.metaData else b""
+
+
+class WOFF2FlavorData(WOFFFlavorData):
+
+	flavor = "woff2"
+
+	def decodeData(self, rawData):
+		import brotli
+		return brotli.decompress(rawData)
+
+	def encodeData(self, data):
+		import brotli
+		return brotli.compress(data)
 
 
 def calcChecksum(data):
