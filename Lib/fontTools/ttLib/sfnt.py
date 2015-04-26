@@ -535,7 +535,7 @@ class WOFF2Writer(WOFFWriter):
 
 		self._writeMasterChecksum()
 
-		# compress transformBuffer with Brotli
+		# compress font data with Brotli
 		self.transformBuffer.seek(0)
 		uncompressedData = self.transformBuffer.read()
 		import brotli
@@ -569,7 +569,7 @@ class WOFF2Writer(WOFFWriter):
 
 	def _writeMasterChecksum(self):
 		checksumadjustment = self._calcMasterChecksum(b"")
-		# write the checksum to the transformBuffer (not to file)
+		# write the checksum to the transformBuffer (not to file!)
 		self.transformBuffer.seek(self.tables['head'].offset + 8)
 		self.transformBuffer.write(struct.pack(">L", checksumadjustment))
 
