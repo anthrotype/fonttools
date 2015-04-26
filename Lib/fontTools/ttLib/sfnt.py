@@ -361,20 +361,22 @@ class WOFFWriter(SFNTWriter):
 	def __init__(self, file, numTables, sfntVersion="\000\001\000\000",
 		         flavorData=None):
 		super(WOFFWriter, self).__init__(file, numTables, sfntVersion)
-		self._setFlavorData(flavorData)
+
+		self._setFlavorDataFormat()
+		if flavorData is not None:
+			if not isinstance(flavorData, WOFFFlavorData):
+				raise TypeError("expected WOFFFlavorData, found %s" % type(flavorData))
+			# make shallow copy instead of replacing self.flavorData, so one can exchange
+			# instances between WOFF and WOFF2
+			self.flavorData.__dict__.update(flavorData.__dict__)
 
 	def _setDirectoryFormat(self):
 		self.directoryFormat = woffDirectoryFormat
 		self.directorySize = woffDirectorySize
 		self.DirectoryEntry = WOFFDirectoryEntry
 
-	def _setFlavorData(self, flavorData):
+	def _setFlavorDataFormat(self):
 		self.flavorData = WOFFFlavorData()
-		if flavorData is not None:
-			if not isinstance(flavorData, WOFFFlavorData):
-				raise TypeError("expected WOFFFlavorData, found %s" % type(flavorData))
-			# make shallow copy of flavorData attributes
-			self.flavorData.__dict__.update(flavorData.__dict__)
 
 	def close(self):
 		self._assertNumTables()
@@ -417,8 +419,8 @@ class WOFFWriter(SFNTWriter):
 		return offset
 
 	def _calcFlavorDataOffsetsAndSize(self, offset):
-		""" Calculate offsets and lengths for any metadata and/or private data
-		starting at specified 'offset'. Return offset incremented by data length.
+		""" Calculate offsets and lengths for any metadata and/or private data,
+		starting from specified 'offset'. Return offset incremented by data length.
 		"""
 		data = self.flavorData
 		if data.metaData:
@@ -467,6 +469,7 @@ class WOFFWriter(SFNTWriter):
 		assert self.flavor in ('woff', 'woff2'), "unsupported flavor"
 
 		offset = sfntDirectorySize + sfntDirectoryEntrySize * len(self.tables)
+		# must be an OrderedDict!
 		for entry in self.tables.values():
 			entry.origOffset = offset
 			offset += (entry.origLength + 3) & ~3
@@ -494,18 +497,13 @@ class WOFF2Writer(WOFFWriter):
 		self.directorySize = woff2DirectorySize
 		self.DirectoryEntry = WOFF2DirectoryEntry
 
+	def _setFlavorDataFormat(self):
+		self.flavorData = WOFF2FlavorData()
+
 	def _seekFirstTable(self):
 		"""Initialise empty transformBuffer."""
 		self.nextTableOffset = 0
 		self.transformBuffer = StringIO()
-
-	def _setFlavorData(self, flavorData):
-		self.flavorData = WOFF2FlavorData()
-		if flavorData is not None:
-			if not isinstance(flavorData, WOFFFlavorData):
-				raise TypeError("expected WOFFFlavorData, found %s" % type(flavorData))
-			# make shallow copy of flavorData attributes
-			self.flavorData.__dict__.update(flavorData.__dict__)
 
 	def __setitem__(self, tag, data):
 		"""Associate new entry named 'tag' with raw table data."""
