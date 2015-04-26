@@ -328,11 +328,11 @@ class SFNTWriter(object):
 				seenHead = 1
 			directory = directory + entry.toString()
 		if seenHead:
-			self.writeMasterChecksum(directory)
+			self._writeMasterChecksum(directory)
 		self.file.seek(0)
 		self.file.write(directory)
 
-	def writeMasterChecksum(self, directory):
+	def _writeMasterChecksum(self, directory):
 		checksumadjustment = self._calcMasterChecksum(directory)
 		# write the checksum to the file
 		self.file.seek(self.tables['head'].offset + 8)
@@ -389,7 +389,7 @@ class WOFFWriter(SFNTWriter):
 		self.signature = b"wOFF"
 		self.reserved = 0
 		self.totalSfntSize = self._calcSftnSize()
-		self.majorVersion, self.minorVersion = self.getVersion()
+		self.majorVersion, self.minorVersion = self._getVersion()
 		self.length = self._calcTotalSize()
 
 		self._writeDirectory()
@@ -402,7 +402,7 @@ class WOFFWriter(SFNTWriter):
 			size += (entry.origLength + 3) & ~3
 		return size
 
-	def getVersion(self):
+	def _getVersion(self):
 		""" Return (majorVersion, minorVersion) tuple for WOFF font as specified in
 		'flavorData' attribute. If None, return version from 'head' table.
 		"""
@@ -462,10 +462,10 @@ class WOFFWriter(SFNTWriter):
 			assert self.file.tell() == self.privOffset
 			self.file.write(privData)
 
-	def writeMasterChecksum(self, directory):
+	def _writeMasterChecksum(self, directory):
 		"""Create a dummy SFNT directory before calculating checkSumAdjustment."""
 		directory = self._makeDummySFNTDirectory()
-		super(WOFFWriter, self).writeMasterChecksum(directory)
+		super(WOFFWriter, self)._writeMasterChecksum(directory)
 
 	def _makeDummySFNTDirectory(self):
 		""" Compute the 'original' SFNT table offsets given the current table order. 
@@ -552,7 +552,7 @@ class WOFF2Writer(WOFFWriter):
 			entry.saveData(self.transformBuffer, data)
 			self.nextTableOffset += entry.length
 
-		self.writeMasterChecksum()
+		self._writeMasterChecksum()
 
 		# compress transformBuffer with Brotli
 		self.transformBuffer.seek(0)
@@ -565,7 +565,7 @@ class WOFF2Writer(WOFFWriter):
 		self.totalSfntSize = self._calcSftnSize()
 		self.totalCompressedSize = len(compressedData)
 		self.length = self._calcTotalSize()
-		self.majorVersion, self.minorVersion = self.getVersion()
+		self.majorVersion, self.minorVersion = self._getVersion()
 
 		directory = sstruct.pack(self.directoryFormat, self)
 		for entry in self.tables.values():
@@ -588,7 +588,7 @@ class WOFF2Writer(WOFFWriter):
 	def _writeDirectory(self):
 		raise NotImplementedError
 
-	def writeMasterChecksum(self):
+	def _writeMasterChecksum(self):
 		directory = self._makeDummySFNTDirectory()
 		checksumadjustment = self._calcMasterChecksum(directory)
 		# write the checksum to the transformBuffer
