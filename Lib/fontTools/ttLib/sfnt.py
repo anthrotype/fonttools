@@ -389,27 +389,26 @@ class WOFFWriter(SFNTWriter):
 		self._writeFlavorData()
 
 	def _calcSftnSize(self):
-		"""Return total size of uncompressed SFNT font."""
+		# calculate total size of uncompressed SFNT font
 		size = sfntDirectorySize + sfntDirectoryEntrySize * len(self.tables)
 		for entry in self.tables.values():
 			size += (entry.origLength + 3) & ~3
 		return size
 
 	def _getVersion(self):
-		""" Return (majorVersion, minorVersion) tuple for WOFF font as specified in
-		'flavorData' attribute. If None, return version from 'head' table.
-		"""
+		# get (majorVersion, minorVersion) for WOFF font
 		data = self.flavorData
 		if data.majorVersion is not None and data.minorVersion is not None:
 			return data.majorVersion, data.minorVersion
 		else:
+			# if None, return 'fontRevision' from 'head' table
 			if hasattr(self, 'headTable'):
 				return struct.unpack(">HH", self.headTable[4:8])
 			else:
 				return 0, 0
 
 	def _calcTotalSize(self):
-		"""Calculate total size of WOFF font, including any meta- or private data."""
+		# calculate total size of WOFF font, including any meta- or private data
 		offset = self.directorySize + self.DirectoryEntry.formatSize * len(self.tables)
 		for entry in self.tables.values():
 			offset += (entry.length + 3) & ~3
@@ -417,13 +416,12 @@ class WOFFWriter(SFNTWriter):
 		return offset
 
 	def _calcFlavorDataOffsetsAndSize(self, offset):
-		""" Calculate offsets and lengths for any metadata and/or private data,
-		starting from specified end of file. Return offset incremented by data size.
-		"""
+		# calculate offsets and lengths for any meta- and/or private data
 		data = self.flavorData
 		if data.metaData:
 			self.metaOrigLength = len(data.metaData)
 			self.metaOffset = offset
+			# compress metaData using zlib (WOFF) or brotli (WOFF2)
 			self.compressedMetaData = data.encodeData(data.metaData)
 			self.metaLength = len(self.compressedMetaData)
 			offset += self.metaLength
@@ -441,7 +439,7 @@ class WOFFWriter(SFNTWriter):
 		return offset
 
 	def _writeFlavorData(self):
-		"""Write any metadata and/or private data to disk using appropriate padding."""
+		# write any metadata and/or private data to disk using appropriate padding
 		compressedMetaData = self.compressedMetaData
 		privData = self.flavorData.privData
 		if compressedMetaData and privData:
@@ -456,20 +454,17 @@ class WOFFWriter(SFNTWriter):
 			self.file.write(privData)
 
 	def _calcMasterChecksum(self, directory):
-		"""Create a dummy SFNT directory before calculating checkSumAdjustment."""
+		# create a dummy SFNT directory before calculating the checkSumAdjustment
 		directory = self._makeDummySFNTDirectory()
 		return super(WOFFWriter, self)._calcMasterChecksum(directory)
 
 	def _makeDummySFNTDirectory(self):
-		""" Compute the 'original' SFNT table offsets given the current table order. 
-		Return the corresponding SFNT directory.
-		"""
+		# compute 'original' SFNT table offsets
 		offset = sfntDirectorySize + sfntDirectoryEntrySize * len(self.tables)
-		# must be an OrderedDict!
 		for entry in self.tables.values():
 			entry.origOffset = offset
 			offset += (entry.origLength + 3) & ~3
-
+		# make dummy SFNT table directory
 		self.searchRange, self.entrySelector, self.rangeShift = getSearchRange(
 			len(self.tables), 16)
 		directory = sstruct.pack(sfntDirectoryFormat, self)
@@ -497,7 +492,7 @@ class WOFF2Writer(WOFFWriter):
 		return WOFF2FlavorData()
 
 	def _seekFirstTable(self):
-		"""Initialise empty transformBuffer."""
+		# initialise empty 'transformBuffer'
 		self.nextTableOffset = 0
 		self.transformBuffer = StringIO()
 
@@ -563,6 +558,7 @@ class WOFF2Writer(WOFFWriter):
 		self._writeFlavorData()
 
 	def _calcTotalSize(self):
+		# calculate total size of WOFF2 font, including any meta- or private data
 		offset = self.directorySize
 		for entry in self.tables.values():
 			offset += len(entry.toString())
@@ -573,11 +569,12 @@ class WOFF2Writer(WOFFWriter):
 
 	def _writeMasterChecksum(self):
 		checksumadjustment = self._calcMasterChecksum(b"")
-		# write the checksum to the transformBuffer
+		# write the checksum to the transformBuffer (not to file)
 		self.transformBuffer.seek(self.tables['head'].offset + 8)
 		self.transformBuffer.write(struct.pack(">L", checksumadjustment))
 
 	def transformTable(self, tag, data):
+		"""Transform 'glyf' or 'loca' table data."""
 		if tag not in woff2TransformedTableTags:
 			raise TTLibError("Transform for table '%s' is unknown" % tag)
 		if tag == "loca":
