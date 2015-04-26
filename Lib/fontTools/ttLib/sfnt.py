@@ -221,7 +221,7 @@ class WOFF2Reader(WOFFReader):
 		if hasattr(entry, 'data'):
 			# already reconstructed
 			return entry.data
-		data = self._reconstructTransformed(tag, rawData)
+		data = self.reconstruct(tag, rawData)
 		if tag == 'loca' and len(data) != entry.origLength:
 			raise TTLibError(
 				"reconstructed 'loca' table doesn't match original size: expected %d, found %d"
@@ -229,7 +229,7 @@ class WOFF2Reader(WOFFReader):
 		entry.data = data
 		return entry.data
 
-	def _reconstructTransformed(self, tag, rawData):
+	def reconstruct(self, tag, rawData):
 		if tag not in woff2TransformedTableTags:
 			raise TTLibError("Transform for table '%s' is unknown" % tag)
 		if tag == 'glyf':
