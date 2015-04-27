@@ -25,10 +25,38 @@ from collections import OrderedDict
 from fontTools.misc import sstruct
 from fontTools.misc.arrayTools import calcIntBounds
 
+haveBrotli = False
+try:
+	import brotli
+	haveBrotli = True
+except ImportError:
+	pass
+
 
 class SFNTReader(object):
 
 	flavor = None
+
+	def __new__(cls, file, checkChecksums=1, fontNumber=-1):
+		if cls is SFNTReader:
+			sfntVersion = Tag(file.read(4))
+			file.seek(0)
+			if sfntVersion == "wOF2":
+				if haveBrotli:
+					print('return new WOFF2Reader object')
+					return super(SFNTReader, cls).__new__(WOFF2Reader)
+				else:
+					print('The WOFF2 encoder requires the Brotli Python extension:\n'
+						  'https://github.com/google/brotli', file=sys.stderr)
+					raise ImportError("No module named brotli")
+			elif sfntVersion == "wOFF":
+				print('return new WOFFReader object')
+				return super(SFNTReader, cls).__new__(WOFFReader)
+			elif sfntVersion == "ttcf":
+				print('return new SFNTCollectionReader object')
+				return super(SFNTReader, cls).__new__(SFNTCollectionReader)
+		print('return new %s object' % cls.__name__)
+		return super(SFNTReader, cls).__new__(cls)
 
 	def __init__(self, file, checkChecksums=1, fontNumber=-1):
 		self.file = file
@@ -37,54 +65,12 @@ class SFNTReader(object):
 		self.flavorData = None
 
 		self._setDirectoryFormat()
-
-		if self.isCollection():
-			self.seekOffsetTable(fontNumber)
-		else:
-			self.file.seek(0)
-
 		self.readDirectory()
 
 	def _setDirectoryFormat(self):
 		self.directoryFormat = sfntDirectoryFormat
 		self.directorySize = sfntDirectorySize
 		self.DirectoryEntry = SFNTDirectoryEntry
-
-	def isCollection(self):
-		"""Return True if file has 'ttcf' tag."""
-		currOffset = self.file.tell()
-		self.file.seek(0)
-		ttcTag = self.file.read(4)
-		self.file.seek(currOffset)
-		return ttcTag == b"ttcf"
-
-	def seekOffsetTable(self, fontNumber):
-		"""Move current position to the offset table of font 'fontNumber'."""
-		if not self.isCollection():
-			raise TTLibError("Not a Font Collection (bad TTCTag)")
-		if not hasattr(self, 'numFonts'):
-			self._readCollectionHeader()
-		if not 0 <= fontNumber < self.numFonts:
-			raise TTLibError("specify a font number between 0 and %d (inclusive)" % (self.numFonts - 1))
-		self.file.seek(self.offsetTables[fontNumber])
-
-	def _readCollectionHeader(self):
-		assert self.isCollection()
-		self.file.seek(0)
-		ttcHeaderData = self.file.read(ttcHeaderSize)
-		if len(ttcHeaderData) != ttcHeaderSize:
-			TTLibError("Not a Font Collection font (not enough data)")
-		sstruct.unpack(ttcHeaderFormat, ttcHeaderData, self)
-		if not (self.Version == 0x00010000 or self.Version == 0x00020000):
-			raise TTLibError("unrecognized TTC version 0x%08x" % self.Version)
-		offsetTableFormat = ">%dL" % self.numFonts
-		offsetTableSize = struct.calcsize(offsetTableFormat)
-		offsetTableData = self.file.read(offsetTableSize)
-		if len(offsetTableData) != offsetTableSize:
-			raise TTLibError("Not a Font Collection (not enough data)")
-		self.offsetTables = struct.unpack(offsetTableFormat, offsetTableData)
-		if self.Version == 0x00020000:
-			pass  # ignoring version 2.0 signatures
 
 	def readDirectory(self):
 		data = self.file.read(self.directorySize)
@@ -141,6 +127,51 @@ class SFNTReader(object):
 		return sorted(self.tables.keys(), key=lambda t: self.tables[t].offset)
 
 
+class SFNTCollectionReader(SFNTReader):
+
+	flavor = "ttc"
+
+	def __init__(self, file, checkChecksums=1, fontNumber=-1):
+		self.file = file
+		self.checkChecksums = checkChecksums
+		self.flavorData = None
+
+		self._setDirectoryFormat()
+		self._readCollectionHeader()
+
+		if fontNumber != -1:
+			self.seekOffsetTable(fontNumber)
+		else:
+			raise NotImplementedError
+
+		self.readDirectory()
+
+	def seekOffsetTable(self, fontNumber):
+		"""Move current position to the offset table of font 'fontNumber'."""
+		if not 0 <= fontNumber < self.numFonts:
+			raise TTLibError("specify a font number between 0 and %d (inclusive)" % (self.numFonts - 1))
+		self.file.seek(self.offsetTables[fontNumber])
+
+	def _readCollectionHeader(self):
+		if Tag(self.file.read(4)) != "ttcf":
+			raise TTLibError("Not a Font Collection (bad TTCTag)")
+		self.file.seek(0)
+		ttcHeaderData = self.file.read(ttcHeaderSize)
+		if len(ttcHeaderData) != ttcHeaderSize:
+			TTLibError("Not a Font Collection font (not enough data)")
+		sstruct.unpack(ttcHeaderFormat, ttcHeaderData, self)
+		if not (self.Version == 0x00010000 or self.Version == 0x00020000):
+			raise TTLibError("unrecognized TTC version 0x%08x" % self.Version)
+		offsetTableFormat = ">%dL" % self.numFonts
+		offsetTableSize = struct.calcsize(offsetTableFormat)
+		offsetTableData = self.file.read(offsetTableSize)
+		if len(offsetTableData) != offsetTableSize:
+			raise TTLibError("Not a Font Collection (not enough data)")
+		self.offsetTables = struct.unpack(offsetTableFormat, offsetTableData)
+		if self.Version == 0x00020000:
+			pass  # ignoring version 2.0 signatures
+
+
 class WOFFReader(SFNTReader):
 
 	flavor = "woff"
@@ -174,9 +205,8 @@ class WOFF2Reader(WOFFReader):
 	flavor = "woff2"
 	signature = b"wOF2"
 
-	def __init__(self, file):
-		super(WOFF2Reader, self).__init__(file)
-
+	def __init__(self, file, checkChecksums=1, fontNumber=-1):
+		super(WOFF2Reader, self).__init__(file, checkChecksums, fontNumber)
 		# decompress font data
 		self.file.seek(self.compressedDataOffset)
 		compressedData = self.file.read(self.totalCompressedSize)
@@ -252,8 +282,28 @@ class SFNTWriter(object):
 
 	flavor = None
 
+	def __new__(cls, file, numTables, sfntVersion="\000\001\000\000",
+		        flavor=None, flavorData=None):
+		if cls is SFNTWriter:
+			if flavor == "woff2":
+				if haveBrotli:
+					print('return new WOFF2Writer object')
+					return super(SFNTWriter, cls).__new__(WOFF2Writer)
+				else:
+					print('The WOFF2 encoder requires the Brotli Python extension:\n'
+						  'https://github.com/google/brotli', file=sys.stderr)
+					raise ImportError("No module named brotli")
+			elif flavor == "woff":
+				print('return new WOFFWriter object')
+				return super(SFNTWriter, cls).__new__(WOFFWriter)
+			elif flavor == "ttc":
+				print('return new SFNTCollectionWriter object')
+				raise NotImplementedError
+		print('return new %s object' % cls.__name__)
+		return super(SFNTWriter, cls).__new__(cls)
+
 	def __init__(self, file, numTables, sfntVersion="\000\001\000\000",
-		         flavorData=None):
+		         flavor=None, flavorData=None):
 		self.file = file
 		self.numTables = numTables
 		self.sfntVersion = Tag(sfntVersion)
@@ -356,7 +406,7 @@ class WOFFWriter(SFNTWriter):
 	flavor = 'woff'
 
 	def __init__(self, file, numTables, sfntVersion="\000\001\000\000",
-		         flavorData=None):
+		         flavor=None, flavorData=None):
 		super(WOFFWriter, self).__init__(file, numTables, sfntVersion)
 
 		self.flavorData = self._newFlavorData()
