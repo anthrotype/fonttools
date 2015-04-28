@@ -56,6 +56,10 @@ def make_output_name(infile, flavor, outdir=None, overwrite=False):
             else:
                 raise IOError(
                     "cannot read 'sfntVersion': file '%s' not found" % infile)
+        elif orig_ext.lower() in [".ttc", ".dfont"]:
+            new_ext = '.ttf'
+        elif orig_ext.lower() == ".otc":
+            new_ext = '.otf'
         else:
             # else use the original extension
             new_ext = orig_ext
