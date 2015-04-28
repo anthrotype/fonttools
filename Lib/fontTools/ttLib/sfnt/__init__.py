@@ -185,6 +185,7 @@ class DFONTReader(SFNTReader):
 		self.numFonts = len(res_indices)
 
 		if self.numFonts == 1:
+			# read single dfont
 			res_index = 1
 		elif self.numFonts > 1:
 			if not 0 <= fontNumber < self.numFonts:
