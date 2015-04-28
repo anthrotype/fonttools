@@ -81,7 +81,7 @@ def parse_options():
     outgroup.add_argument('-d', '--output-dir', nargs='?', type=str,
                           dest='outdir', default=None,
                           help='output folder (will be created if not exists)')
-    outgroup.add_argument('-y', nargs='?', type=int,
+    parser.add_argument('-y', nargs='?', type=int,
                           dest='fontNumber', default=-1,
                           help='font number from collection')
     parser.add_argument('--force', action='store_true',
