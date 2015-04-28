@@ -227,18 +227,35 @@ def ttCompile(input, output, options):
 		print("finished at", time.strftime("%H:%M:%S", time.localtime(time.time())))
 
 
-def guessFileType(fileName):
-	base, ext = os.path.splitext(fileName)
-	try:
-		f = open(fileName, "rb")
-	except IOError:
-		return None
-	cr, tp = getMacCreatorAndType(fileName)
-	if tp in ("sfnt", "FFIL"):
-		return "TTF"
-	if ext == ".dfont":
-		return "TTF"
+def guessFileType(fileOrPath):
+	"""Get a file path or object, and return its file type."""
+	if not hasattr(fileOrPath, "read"):
+		# assume fileOrPath is a file name
+		fileName = fileOrPath
+		try:
+			f = open(fileName, "rb")
+		except IOError:
+			return None
+	else:
+		# assume fileOrPath is a readable file object
+		f = fileOrPath
+		# get file name, if it has one
+		if hasattr(f, 'name') and os.path.exists(f.name):
+			fileName = f.name
+		else:
+			fileName = ""
+	if fileName:
+		base, ext = os.path.splitext(fileName)
+		if ext == ".dfont":
+			return "TTF"
+		cr, tp = getMacCreatorAndType(fileName)
+		if tp in ("sfnt", "FFIL"):
+			return "TTF"
+	# seek to start, but remember the current position
+	pos = f.tell()
+	f.seek(0)
 	header = f.read(256)
+	f.seek(pos)
 	head = Tag(header[:4])
 	if head == "OTTO":
 		return "OTF"

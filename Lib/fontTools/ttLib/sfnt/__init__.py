@@ -15,65 +15,12 @@ a table's length chages you need to rewrite the whole file anyway.
 from __future__ import print_function, division, absolute_import
 from fontTools.misc.py23 import *
 from fontTools.misc import sstruct
-from fontTools.misc.macCreatorType import getMacCreatorAndType
 from fontTools.ttLib import getSearchRange, TTLibError, haveMacSupport
+from fontTools.ttx import guessFileType
 import sys
 import os
-import re
 import struct
 from collections import OrderedDict
-
-
-opentypeheaderRE = re.compile('''sfntVersion=['"]OTTO["']''')
-
-def guessFileType(fileOrPath):
-	"""Get a file path or object, and return its file type."""
-	if not hasattr(fileOrPath, "read"):
-		# assume fileOrPath is a file name
-		fileName = fileOrPath
-		try:
-			f = open(fileName, "rb")
-		except IOError:
-			return None
-	else:
-		# assume fileOrPath is a readable file object
-		f = fileOrPath
-		# get file name, if it has one
-		if hasattr(f, 'name') and os.path.exists(f.name):
-			fileName = f.name
-		else:
-			fileName = ""
-	if fileName:
-		base, ext = os.path.splitext(fileName)
-		if ext == ".dfont":
-			return "TTF"
-		cr, tp = getMacCreatorAndType(fileName)
-		if tp in ("sfnt", "FFIL"):
-			return "TTF"
-	# seek to start, but remember the current position
-	pos = f.tell()
-	f.seek(0)
-	header = f.read(256)
-	f.seek(pos)
-	head = Tag(header[:4])
-	if head == "OTTO":
-		return "OTF"
-	elif head == "ttcf":
-		return "TTC"
-	elif head in ("\0\1\0\0", "true"):
-		return "TTF"
-	elif head == "wOFF":
-		return "WOFF"
-	elif head == "wOF2":
-		return "WOFF2"
-	elif head.lower() == "<?xm":
-		# Use 'latin1' because that can't fail.
-		header = tostr(header, 'latin1')
-		if opentypeheaderRE.search(header):
-			return "OTX"
-		else:
-			return "TTX"
-	return None
 
 
 class SFNTReader(object):
