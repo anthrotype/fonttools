@@ -137,11 +137,7 @@ class TTCReader(SFNTReader):
 
 		self._setDirectoryFormat()
 		self._readCollectionHeader()
-
-		if fontNumber != -1:
-			self._seekOffsetTable(fontNumber)
-		else:
-			raise NotImplementedError
+		self._seekOffsetTable(fontNumber)
 
 		self._readDirectory()
 
