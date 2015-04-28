@@ -247,7 +247,7 @@ def guessFileType(fileOrPath):
 	if fileName:
 		base, ext = os.path.splitext(fileName)
 		if ext == ".dfont":
-			return "TTF"
+			return "DFONT"
 		cr, tp = getMacCreatorAndType(fileName)
 		if tp in ("sfnt", "FFIL"):
 			return "TTF"
@@ -291,7 +291,7 @@ def parseOptions(args):
 	
 	for input in files:
 		tp = guessFileType(input)
-		if tp in ("OTF", "TTF", "TTC", "WOFF", "WOFF2"):
+		if tp in ("OTF", "TTF", "TTC", "DFONT", "WOFF", "WOFF2"):
 			extension = ".ttx"
 			if options.listTables:
 				action = ttList
