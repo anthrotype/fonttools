@@ -28,6 +28,9 @@ class SFNTReader(object):
 	flavor = None
 
 	def __new__(cls, infile, *args, **kwargs):
+		""" Return an instance of the SFNTReader sub-class which is compatible
+		with the input file type.
+		"""
 		if cls is SFNTReader:
 			fileType = guessFileType(infile)
 			if fileType == "TTC":
@@ -171,6 +174,9 @@ class SFNTWriter(object):
 
 	def __new__(cls, outfile, numTables, sfntVersion="\000\001\000\000",
 		        flavor=None, *args, **kwargs):
+		""" Return an instance of the SFNTWriter sub-class which is compatible
+		with the specified 'flavor'.
+		"""
 		if flavor and cls is SFNTWriter:
 			if flavor == "woff":
 				# return new WOFFWriter object
