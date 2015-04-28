@@ -46,7 +46,7 @@ class SFNTReader(object):
 				# return new SFNTCollectionReader object
 				return super(SFNTReader, cls).__new__(SFNTCollectionReader)
 		# return default
-		return object.__new__(cls)
+		return super(SFNTReader, cls).__new__(cls)
 
 	def __init__(self, file, checkChecksums=1, fontNumber=-1):
 		self.file = file
