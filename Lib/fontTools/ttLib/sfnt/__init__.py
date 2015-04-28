@@ -18,7 +18,6 @@ from fontTools.misc import sstruct
 from fontTools.ttLib import getSearchRange, TTLibError, haveMacSupport
 from fontTools.ttx import guessFileType
 import sys
-import os
 import struct
 from collections import OrderedDict
 
@@ -34,9 +33,9 @@ class SFNTReader(object):
 		if cls is SFNTReader:
 			fileType = guessFileType(infile)
 			if fileType == "TTC":
-				# return new SFNTCollectionReader object
+				# return new TTCReader object
 				return super(SFNTReader, cls).__new__(
-					SFNTCollectionReader, infile, *args, **kwargs)
+					TTCReader, infile, *args, **kwargs)
 			elif fileType == "WOFF":
 				# return new WOFFReader object
 				from .woff import WOFFReader
@@ -47,6 +46,10 @@ class SFNTReader(object):
 				from .woff2 import WOFF2Reader
 				return super(SFNTReader, cls).__new__(
 					WOFF2Reader, infile, *args, **kwargs)
+			elif fileType == "DFONT":
+				# return new DFONTReader object
+				return super(SFNTReader, cls).__new__(
+					DFONTReader, infile, *args, **kwargs)
 			elif fileType in ("TTF", "OTF"):
 				pass  # use default SFNTReader
 			else:
@@ -61,14 +64,14 @@ class SFNTReader(object):
 		self.flavorData = None
 
 		self._setDirectoryFormat()
-		self.readDirectory()
+		self._readDirectory()
 
 	def _setDirectoryFormat(self):
 		self.directoryFormat = sfntDirectoryFormat
 		self.directorySize = sfntDirectorySize
 		self.DirectoryEntry = SFNTDirectoryEntry
 
-	def readDirectory(self):
+	def _readDirectory(self):
 		data = self.file.read(self.directorySize)
 		if len(data) != self.directorySize:
 			raise TTLibError("Not a TrueType or OpenType font (not enough data)")
@@ -123,7 +126,7 @@ class SFNTReader(object):
 		return sorted(self.tables.keys(), key=lambda t: self.tables[t].offset)
 
 
-class SFNTCollectionReader(SFNTReader):
+class TTCReader(SFNTReader):
 
 	flavor = "ttc"
 
@@ -136,20 +139,20 @@ class SFNTCollectionReader(SFNTReader):
 		self._readCollectionHeader()
 
 		if fontNumber != -1:
-			self.seekOffsetTable(fontNumber)
+			self._seekOffsetTable(fontNumber)
 		else:
 			raise NotImplementedError
 
-		self.readDirectory()
+		self._readDirectory()
 
-	def seekOffsetTable(self, fontNumber):
+	def _seekOffsetTable(self, fontNumber):
 		"""Move current position to the offset table of font 'fontNumber'."""
 		if not 0 <= fontNumber < self.numFonts:
 			raise TTLibError("specify a font number between 0 and %d (inclusive)" % (self.numFonts - 1))
 		self.file.seek(self.offsetTables[fontNumber])
 
 	def _readCollectionHeader(self):
-		if Tag(self.file.read(4)) != "ttcf":
+		if guessFileType(self.file) != "TTC":
 			raise TTLibError("Not a Font Collection (bad TTCTag)")
 		self.file.seek(0)
 		ttcHeaderData = self.file.read(ttcHeaderSize)
@@ -166,6 +169,37 @@ class SFNTCollectionReader(SFNTReader):
 		self.offsetTables = struct.unpack(offsetTableFormat, offsetTableData)
 		if self.Version == 0x00020000:
 			pass  # ignoring version 2.0 signatures
+
+
+class DFONTReader(SFNTReader):
+
+	def __init__(self, infile, checkChecksums=1, fontNumber=-1):
+		if not haveMacSupport:
+			raise TTLibError("DFONT is not supported on this platform")
+		from fontTools.ttLib import macUtils
+		import os
+
+		self.checkChecksums = checkChecksums
+		self.flavorData = None
+		self._setDirectoryFormat()
+
+		if not hasattr(infile, 'name') or not os.path.exists(infile.name):
+			raise TTLibError("can't find path to input file")
+		res_indices = macUtils.getSFNTResIndices(infile.name)
+		self.numFonts = len(res_indices)
+
+		if self.numFonts == 1:
+			res_index = 1
+		elif self.numFonts > 1:
+			if not 0 <= fontNumber < self.numFonts:
+				raise TTLibError("specify a font number between 0 and %d (inclusive)" % (self.numFonts - 1))
+			# 'fontNumber' is 0-indexed, resource indeces start from 1
+			res_index = fontNumber + 1
+		else:
+			raise TTLibError("Not a Datafork TrueType font (no 'sfnt' resources)")
+		self.file = macUtils.SFNTResourceReader(infile.name, res_index)
+
+		self._readDirectory()
 
 
 class SFNTWriter(object):
@@ -189,7 +223,7 @@ class SFNTWriter(object):
 				return super(SFNTWriter, cls).__new__(
 					WOFF2Writer, outfile, numTables, sfntVersion, flavor, *args, **kwargs)
 			elif flavor == "ttc":
-				# return new SFNTCollectionWriter object?
+				# return new TTCWriter object?
 				raise NotImplementedError
 		# return default object
 		return super(SFNTWriter, cls).__new__(
