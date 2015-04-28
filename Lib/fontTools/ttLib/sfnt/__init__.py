@@ -175,7 +175,7 @@ class DFONTReader(SFNTReader):
 
 	def __init__(self, infile, checkChecksums=1, fontNumber=-1):
 		if not haveMacSupport:
-			raise TTLibError("DFONT is not supported on this platform")
+			raise TTLibError("DFONT format is not supported on this platform")
 		from fontTools.ttLib import macUtils
 		import os
 
