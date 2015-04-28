@@ -43,7 +43,7 @@ class SFNTReader(object):
 						  'https://github.com/google/brotli', file=sys.stderr)
 					raise ImportError("No module named brotli")
 			elif sfntVersion == "wOFF":
-				# return new WOFFReader object
+				# return new WOFFReader object
 				return super(SFNTReader, cls).__new__(WOFFReader)
 			elif sfntVersion == "ttcf":
 				# return new SFNTCollectionReader object
@@ -287,12 +287,12 @@ class SFNTWriter(object):
 						  'https://github.com/google/brotli', file=sys.stderr)
 					raise ImportError("No module named brotli")
 			elif flavor == "woff":
-				# return new WOFFWriter object
+				# return new WOFFWriter object
 				return super(SFNTWriter, cls).__new__(WOFFWriter)
 			elif flavor == "ttc":
 				# return new SFNTCollectionWriter object
 				raise NotImplementedError
-		# return default
+		# return default
 		return super(SFNTWriter, cls).__new__(cls)
 
 	def __init__(self, file, numTables, sfntVersion="\000\001\000\000",
