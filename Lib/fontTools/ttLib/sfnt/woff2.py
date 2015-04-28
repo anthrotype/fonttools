@@ -6,11 +6,19 @@ from collections import OrderedDict
 import struct
 from fontTools.misc import sstruct
 from fontTools.misc.arrayTools import calcIntBounds
-from fontTools.ttLib import (TTFont, TTLibError, getTableModule,
-	getTableClass, haveBrotli)
+from fontTools.ttLib import TTFont, TTLibError, getTableModule, getTableClass
 from fontTools.ttLib.sfnt import DirectoryEntry
 from fontTools.ttLib.sfnt.woff import WOFFReader, WOFFWriter, WOFFFlavorData, padData
 from fontTools.ttLib.tables import ttProgram
+
+# The WOFF2 encoder/decoder requires the Brotli Python extension:
+# https://github.com/google/brotli
+haveBrotli = False
+try:
+	import brotli
+	haveBrotli = True
+except ImportError:
+	pass
 
 
 def normaliseFont(ttFont):
@@ -44,11 +52,13 @@ class WOFF2Reader(WOFFReader):
 	signature = b"wOF2"
 
 	def __init__(self, file, checkChecksums=1, fontNumber=-1):
+		if not haveBrotli:
+			raise ImportError("No module named brotli")
 		super(WOFF2Reader, self).__init__(file, checkChecksums, fontNumber)
+
 		# decompress font data
 		self.file.seek(self.compressedDataOffset)
 		compressedData = self.file.read(self.totalCompressedSize)
-		import brotli
 		decompressedData = brotli.decompress(compressedData)
 		totalUncompressedSize = sum([entry.length for entry in self.tables.values()])
 		if len(decompressedData) != totalUncompressedSize:
@@ -120,6 +130,12 @@ class WOFF2Writer(WOFFWriter):
 
 	flavor = 'woff2'
 
+	def __init__(self, file, numTables, sfntVersion="\000\001\000\000",
+		         flavor=None, flavorData=None):
+		if not haveBrotli:
+			raise ImportError("No module named brotli")
+		super(WOFF2Writer, self).__init__(file, numTables, sfntVersion, flavor, flavorData)
+
 	def _setDirectoryFormat(self):
 		self.directoryFormat = woff2DirectoryFormat
 		self.directorySize = woff2DirectorySize
@@ -175,7 +191,6 @@ class WOFF2Writer(WOFFWriter):
 		# compress font data with Brotli
 		self.transformBuffer.seek(0)
 		uncompressedData = self.transformBuffer.read()
-		import brotli
 		compressedData = brotli.compress(uncompressedData, brotli.MODE_FONT)
 
 		self.signature = b"wOF2"
