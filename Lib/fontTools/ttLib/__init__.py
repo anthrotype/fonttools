@@ -206,8 +206,8 @@ class TTFont(object):
 			closeStream = 0
 
 		if self.flavor == "woff2":
-			from fontTools.ttLib.sfnt import woff2NormaliseFont
-			woff2NormaliseFont(self)
+			from fontTools.ttLib.sfnt import woff2
+			woff2.normaliseFont(self)
 			# don't reorder tables in WOFF2 as encoder already takes care of it
 			reorderTables = False
 		
@@ -818,41 +818,6 @@ def newTable(tag):
 	"""Return a new instance of a table."""
 	tableClass = getTableClass(tag)
 	return tableClass(tag)
-
-
-def newSFNTReader(file, checkChecksums=1, fontNumber=-1):
-	from fontTools.ttLib import sfnt
-	sfntVersion = Tag(file.read(4))
-	file.seek(0)
-	if sfntVersion == "wOF2":
-		if haveBrotli:
-			return sfnt.WOFF2Reader(file)
-		else:
-			print('The WOFF2 encoder requires the Brotli Python extension, available at:\n'
-				  'https://github.com/google/brotli', file=sys.stderr)
-			raise ImportError("No module named brotli")
-	elif sfntVersion == "wOFF":
-		return sfnt.WOFFReader(file, checkChecksums)
-	else:
-		return sfnt.SFNTReader(file, checkChecksums, fontNumber)
-
-
-def newSFNTWriter(file, numTables, sfntVersion="\000\001\000\000",
-		          flavor=None, flavorData=None):
-	from fontTools.ttLib import sfnt
-	if flavor is None:
-		return sfnt.SFNTWriter(file, numTables, sfntVersion)
-	elif flavor == "woff":
-		return sfnt.WOFFWriter(file, numTables, sfntVersion, flavorData)
-	elif flavor == "woff2":
-		if haveBrotli:
-			return sfnt.WOFF2Writer(file, numTables, sfntVersion, flavorData)
-		else:
-			print('The WOFF2 encoder requires the Brotli Python extension, available at:\n'
-				  'https://github.com/google/brotli', file=sys.stderr)
-			raise ImportError("No module named brotli")
-	else:
-		raise TTLibError("Unknown flavor '%s'" % flavor)
 
 
 def _escapechar(c):
