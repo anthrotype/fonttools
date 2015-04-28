@@ -32,7 +32,7 @@ class SFNTReader(object):
 			if sfntVersion == "wOF2":
 				if haveBrotli:
 					# return new WOFF2Reader object
-					from fontTools.ttLib.sfnt.woff2 import WOFF2Reader
+					from .woff2 import WOFF2Reader
 					return super(SFNTReader, cls).__new__(WOFF2Reader)
 				else:
 					print('The WOFF2 encoder requires the Brotli Python extension:\n'
@@ -40,7 +40,7 @@ class SFNTReader(object):
 					raise ImportError("No module named brotli")
 			elif sfntVersion == "wOFF":
 				# return new WOFFReader object
-				from fontTools.ttLib.sfnt.woff import WOFFReader
+				from .woff import WOFFReader
 				return super(SFNTReader, cls).__new__(WOFFReader)
 			elif sfntVersion == "ttcf":
 				# return new SFNTCollectionReader object
@@ -172,7 +172,7 @@ class SFNTWriter(object):
 			if flavor == "woff2":
 				if haveBrotli:
 					# return new WOFF2Writer object
-					from fontTools.ttLib.sfnt.woff2 import WOFF2Writer
+					from .woff2 import WOFF2Writer
 					return super(SFNTWriter, cls).__new__(WOFF2Writer)
 				else:
 					print('The WOFF2 encoder requires the Brotli Python extension:\n'
@@ -180,7 +180,7 @@ class SFNTWriter(object):
 					raise ImportError("No module named brotli")
 			elif flavor == "woff":
 				# return new WOFFWriter object
-				from fontTools.ttLib.sfnt.woff import WOFFWriter
+				from .woff import WOFFWriter
 				return super(SFNTWriter, cls).__new__(WOFFWriter)
 			elif flavor == "ttc":
 				# return new SFNTCollectionWriter object
