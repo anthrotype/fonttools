@@ -16,7 +16,7 @@ from __future__ import print_function, division, absolute_import
 from fontTools.misc.py23 import *
 from fontTools.misc import sstruct
 from fontTools.ttLib import (TTFont, getSearchRange, TTLibError, getTableModule,
-	getTableClass)
+	getTableClass, haveBrotli)
 from fontTools.ttLib.tables import ttProgram
 import sys
 import array
@@ -24,13 +24,6 @@ import struct
 from collections import OrderedDict
 from fontTools.misc import sstruct
 from fontTools.misc.arrayTools import calcIntBounds
-
-haveBrotli = False
-try:
-	import brotli
-	haveBrotli = True
-except ImportError:
-	pass
 
 
 class SFNTReader(object):
@@ -43,19 +36,19 @@ class SFNTReader(object):
 			file.seek(0)
 			if sfntVersion == "wOF2":
 				if haveBrotli:
-					print('return new WOFF2Reader object')
-					return object.__new__(WOFF2Reader)
+					# return new WOFF2Reader object
+					return super(SFNTReader, cls).__new__(WOFF2Reader)
 				else:
 					print('The WOFF2 encoder requires the Brotli Python extension:\n'
 						  'https://github.com/google/brotli', file=sys.stderr)
 					raise ImportError("No module named brotli")
 			elif sfntVersion == "wOFF":
-				print('return new WOFFReader object')
-				return object.__new__(WOFFReader)
+				# return new WOFFReader object
+				return super(SFNTReader, cls).__new__(WOFFReader)
 			elif sfntVersion == "ttcf":
-				print('return new SFNTCollectionReader object')
-				return object.__new__(SFNTCollectionReader)
-		print('return new %s object' % cls.__name__)
+				# return new SFNTCollectionReader object
+				return super(SFNTReader, cls).__new__(SFNTCollectionReader)
+		# return default
 		return object.__new__(cls)
 
 	def __init__(self, file, checkChecksums=1, fontNumber=-1):
@@ -287,20 +280,20 @@ class SFNTWriter(object):
 		if cls is SFNTWriter:
 			if flavor == "woff2":
 				if haveBrotli:
-					print('return new WOFF2Writer object')
-					return object.__new__(WOFF2Writer)
+					# return new WOFF2Writer object
+					return super(SFNTWriter, cls).__new__(WOFF2Writer)
 				else:
 					print('The WOFF2 encoder requires the Brotli Python extension:\n'
 						  'https://github.com/google/brotli', file=sys.stderr)
 					raise ImportError("No module named brotli")
 			elif flavor == "woff":
-				print('return new WOFFWriter object')
-				return object.__new__(WOFFWriter)
+				# return new WOFFWriter object
+				return super(SFNTWriter, cls).__new__(WOFFWriter)
 			elif flavor == "ttc":
-				print('return new SFNTCollectionWriter object')
+				# return new SFNTCollectionWriter object
 				raise NotImplementedError
-		print('return new %s object' % cls.__name__)
-		return object.__new__(cls)
+		# return default
+		return super(SFNTWriter, cls).__new__(cls)
 
 	def __init__(self, file, numTables, sfntVersion="\000\001\000\000",
 		         flavor=None, flavorData=None):
