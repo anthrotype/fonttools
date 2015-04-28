@@ -15,36 +15,97 @@ a table's length chages you need to rewrite the whole file anyway.
 from __future__ import print_function, division, absolute_import
 from fontTools.misc.py23 import *
 from fontTools.misc import sstruct
-from fontTools.ttLib import getSearchRange, TTLibError
+from fontTools.misc.macCreatorType import getMacCreatorAndType
+from fontTools.ttLib import getSearchRange, TTLibError, haveMacSupport
 import sys
+import os
+import re
 import struct
 from collections import OrderedDict
+
+
+opentypeheaderRE = re.compile('''sfntVersion=['"]OTTO["']''')
+
+def guessFileType(fileOrPath):
+	"""Get a file path or object, and return its file type."""
+	if not hasattr(fileOrPath, "read"):
+		# assume fileOrPath is a file name
+		fileName = fileOrPath
+		try:
+			f = open(fileName, "rb")
+		except IOError:
+			return None
+	else:
+		# assume fileOrPath is a readable file object
+		f = fileOrPath
+		# get file name, if it has one
+		if hasattr(f, 'name') and os.path.exists(f.name):
+			fileName = f.name
+		else:
+			fileName = ""
+	if fileName:
+		base, ext = os.path.splitext(fileName)
+		if ext == ".dfont":
+			return "TTF"
+		cr, tp = getMacCreatorAndType(fileName)
+		if tp in ("sfnt", "FFIL"):
+			return "TTF"
+	# seek to start, but remember the current position
+	pos = f.tell()
+	f.seek(0)
+	header = f.read(256)
+	f.seek(pos)
+	head = Tag(header[:4])
+	if head == "OTTO":
+		return "OTF"
+	elif head == "ttcf":
+		return "TTC"
+	elif head in ("\0\1\0\0", "true"):
+		return "TTF"
+	elif head == "wOFF":
+		return "WOFF"
+	elif head == "wOF2":
+		return "WOFF2"
+	elif head.lower() == "<?xm":
+		# Use 'latin1' because that can't fail.
+		header = tostr(header, 'latin1')
+		if opentypeheaderRE.search(header):
+			return "OTX"
+		else:
+			return "TTX"
+	return None
 
 
 class SFNTReader(object):
 
 	flavor = None
 
-	def __new__(cls, file, checkChecksums=1, fontNumber=-1):
+	def __new__(cls, infile, *args, **kwargs):
 		if cls is SFNTReader:
-			sfntVersion = Tag(file.read(4))
-			file.seek(0)
-			if sfntVersion == "wOF2":
-				# return new WOFF2Reader object
-				from .woff2 import WOFF2Reader
-				return super(SFNTReader, cls).__new__(WOFF2Reader)
-			elif sfntVersion == "wOFF":
+			fileType = guessFileType(infile)
+			if fileType == "TTC":
+				# return new SFNTCollectionReader object
+				return super(SFNTReader, cls).__new__(
+					SFNTCollectionReader, infile, *args, **kwargs)
+			elif fileType == "WOFF":
 				# return new WOFFReader object
 				from .woff import WOFFReader
-				return super(SFNTReader, cls).__new__(WOFFReader)
-			elif sfntVersion == "ttcf":
-				# return new SFNTCollectionReader object
-				return super(SFNTReader, cls).__new__(SFNTCollectionReader)
+				return super(SFNTReader, cls).__new__(
+					WOFFReader, infile, *args, **kwargs)
+			elif fileType == "WOFF2":
+				# return new WOFF2Reader object
+				from .woff2 import WOFF2Reader
+				return super(SFNTReader, cls).__new__(
+					WOFF2Reader, infile, *args, **kwargs)
+			elif fileType in ("TTF", "OTF"):
+				pass  # use default SFNTReader
+			else:
+				raise TTLibError('Unsupported file type: %s' % fileType)
 		# return default object
-		return super(SFNTReader, cls).__new__(cls)
+		return super(SFNTReader, cls).__new__(cls, infile, *args, **kwargs)
 
-	def __init__(self, file, checkChecksums=1, fontNumber=-1):
-		self.file = file
+	def __init__(self, infile, checkChecksums=1, fontNumber=-1):
+		self.file = infile
 		self.checkChecksums = checkChecksums
 		self.fontNumber = fontNumber
 		self.flavorData = None
@@ -116,8 +177,8 @@ class SFNTCollectionReader(SFNTReader):
 
 	flavor = "ttc"
 
-	def __init__(self, file, checkChecksums=1, fontNumber=-1):
-		self.file = file
+	def __init__(self, infile, checkChecksums=1, fontNumber=-1):
+		self.file = infile
 		self.checkChecksums = checkChecksums
 		self.flavorData = None
 
@@ -161,26 +222,29 @@ class SFNTWriter(object):
 
 	flavor = None
 
-	def __new__(cls, file, numTables, sfntVersion="\000\001\000\000",
-		        flavor=None, flavorData=None):
-		if cls is SFNTWriter:
-			if flavor == "woff2":
-				# return new WOFF2Writer object
-				from .woff2 import WOFF2Writer
-				return super(SFNTWriter, cls).__new__(WOFF2Writer)
-			elif flavor == "woff":
+	def __new__(cls, outfile, numTables, sfntVersion="\000\001\000\000",
+		        flavor=None, *args, **kwargs):
+		if flavor and cls is SFNTWriter:
+			if flavor == "woff":
 				# return new WOFFWriter object
 				from .woff import WOFFWriter
-				return super(SFNTWriter, cls).__new__(WOFFWriter)
+				return super(SFNTWriter, cls).__new__(
+					WOFFWriter, outfile, numTables, sfntVersion, flavor, *args, **kwargs)
+			elif flavor == "woff2":
+				# return new WOFF2Writer object
+				from .woff2 import WOFF2Writer
+				return super(SFNTWriter, cls).__new__(
+					WOFF2Writer, outfile, numTables, sfntVersion, flavor, *args, **kwargs)
 			elif flavor == "ttc":
-				# return new SFNTCollectionWriter object
+				# return new SFNTCollectionWriter object?
 				raise NotImplementedError
 		# return default object
-		return super(SFNTWriter, cls).__new__(cls)
+		return super(SFNTWriter, cls).__new__(
+			cls, outfile, numTables, sfntVersion, flavor, *args, **kwargs)
 
-	def __init__(self, file, numTables, sfntVersion="\000\001\000\000",
+	def __init__(self, outfile, numTables, sfntVersion="\000\001\000\000",
 		         flavor=None, flavorData=None):
-		self.file = file
+		self.file = outfile
 		self.numTables = numTables
 		self.sfntVersion = Tag(sfntVersion)
 		self.flavorData = flavorData
@@ -319,8 +383,8 @@ class DirectoryEntry(object):
 	def __init__(self):
 		self.uncompressed = False # if True, always embed entry raw
 
-	def fromFile(self, file):
-		sstruct.unpack(self.format, file.read(self.formatSize), self)
+	def fromFile(self, infile):
+		sstruct.unpack(self.format, infile.read(self.formatSize), self)
 	
 	def fromString(self, str):
 		sstruct.unpack(self.format, str, self)
@@ -334,18 +398,18 @@ class DirectoryEntry(object):
 		else:
 			return "<%s at %x>" % (self.__class__.__name__, id(self))
 
-	def loadData(self, file):
-		file.seek(self.offset)
-		data = file.read(self.length)
+	def loadData(self, infile):
+		infile.seek(self.offset)
+		data = infile.read(self.length)
 		assert len(data) == self.length
 		data = self.decodeData(data)
 		return data
 
-	def saveData(self, file, data):
+	def saveData(self, outfile, data):
 		data = self.encodeData(data)
 		self.length = len(data)
-		file.seek(self.offset)
-		file.write(data)
+		outfile.seek(self.offset)
+		outfile.write(data)
 
 	def decodeData(self, rawData):
 		return rawData
