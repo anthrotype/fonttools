@@ -4,13 +4,38 @@ import sys
 import array
 from collections import OrderedDict
 import struct
-from fontTools.ttLib import (TTFont, TTLibError, getTableModule,
-	getTableClass, haveBrotli)
-from fontTools.ttLib.sfnt.woff import WOFFReader, WOFFWriter, WOFFFlavorData, padData
-from fontTools.ttLib.sfnt import DirectoryEntry
 from fontTools.misc import sstruct
 from fontTools.misc.arrayTools import calcIntBounds
+from fontTools.ttLib import (TTFont, TTLibError, getTableModule,
+	getTableClass, haveBrotli)
+from fontTools.ttLib.sfnt import DirectoryEntry
+from fontTools.ttLib.sfnt.woff import WOFFReader, WOFFWriter, WOFFFlavorData, padData
 from fontTools.ttLib.tables import ttProgram
+
+
+def normaliseFont(ttFont):
+	""" The WOFF 2.0 conversion is guaranteed to be lossless in a bitwise sense
+	only for 'normalised' font files. Normalisation occurs before any transforms,
+	and involves:
+		- removing the DSIG table, since the encoding process can invalidate it;
+		- setting bit 11 of head 'flags' field to indicate that the font has
+		  undergone a 'lossless modifying transform'.
+	For TrueType-flavoured OpenType fonts, normalisation also involves padding
+	glyph offsets to multiple of 4 bytes.
+	"""
+	if "DSIG" in ttFont:
+		del ttFont["DSIG"]
+		ttFont['head'].flags |= 1 << 11
+
+	# The notion of "nominal size" has been removed from the WOFF2 Specification,
+	# but as of today (15 April 2015) most decoders still expects padded data.
+	# TODO(user): delete next block once glyph padding is no longer required
+	if ttFont.sfntVersion == '\x00\x01\x00\x00':
+		# don't be lazy so that glyph data is 'expanded' on decompile
+		ttFont.lazy = False
+		# decompile glyf table to perform padding normalisation upon compile
+		if not ttFont.isLoaded('glyf'):
+			ttFont['glyf']
 
 
 class WOFF2Reader(WOFFReader):
@@ -335,31 +360,6 @@ class WOFF2FlavorData(WOFFFlavorData):
 	def encodeData(self, data):
 		import brotli
 		return brotli.compress(data)
-
-
-def normaliseFont(ttFont):
-	""" The WOFF 2.0 conversion is guaranteed to be lossless in a bitwise sense
-	only for 'normalised' font files. Normalisation occurs before any transforms,
-	and involves:
-		- removing the DSIG table, since the encoding process can invalidate it;
-		- setting bit 11 of head 'flags' field to indicate that the font has
-		  undergone a 'lossless modifying transform'.
-	For TrueType-flavoured OpenType fonts, normalisation also involves padding
-	glyph offsets to multiple of 4 bytes.
-	"""
-	if "DSIG" in ttFont:
-		del ttFont["DSIG"]
-		ttFont['head'].flags |= 1 << 11
-
-	# The notion of "nominal size" has been removed from the WOFF2 Specification,
-	# but as of today (15 April 2015) most decoders still expects padded data.
-	# TODO(user): delete next block once glyph padding is no longer required
-	if ttFont.sfntVersion == '\x00\x01\x00\x00':
-		# don't be lazy so that glyph data is 'expanded' on decompile
-		ttFont.lazy = False
-		# decompile glyf table to perform padding normalisation upon compile
-		if not ttFont.isLoaded('glyf'):
-			ttFont['glyf']
 
 
 class WOFF2GlyfTable(getTableClass('glyf')):
