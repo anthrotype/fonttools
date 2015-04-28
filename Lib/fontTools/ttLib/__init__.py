@@ -133,7 +133,8 @@ class TTFont(object):
 		access only.  If it is set to False, many data structures are loaded
 		immediately.  The default is lazy=None which is somewhere in between.
 		"""
-		
+
+		from fontTools.ttLib import sfnt
 		self.verbose = verbose
 		self.quiet = quiet
 		self.lazy = lazy
@@ -171,7 +172,7 @@ class TTFont(object):
 				file = open(file, "rb")
 		else:
 			pass # assume "file" is a readable file object
-		self.reader = newSFNTReader(file, checkChecksums, fontNumber=fontNumber)
+		self.reader = sfnt.SFNTReader(file, checkChecksums, fontNumber=fontNumber)
 		self.sfntVersion = self.reader.sfntVersion
 		self.flavor = self.reader.flavor
 		self.flavorData = self.reader.flavorData
@@ -189,6 +190,7 @@ class TTFont(object):
 		On the Mac, if makeSuitcase is true, a suitcase (resource fork)
 		file will we made instead of a flat .ttf file. 
 		"""
+		from fontTools.ttLib import sfnt
 		if not hasattr(file, "write"):
 			closeStream = 1
 			if os.name == "mac" and makeSuitcase:
@@ -218,7 +220,7 @@ class TTFont(object):
 			tmp = tempfile.TemporaryFile(prefix="ttx-fonttools")
 		else:
 			tmp = file
-		writer = newSFNTWriter(tmp, numTables, self.sfntVersion, self.flavor, self.flavorData)
+		writer = sfnt.SFNTWriter(tmp, numTables, self.sfntVersion, self.flavor, self.flavorData)
 		
 		done = []
 		for tag in tags:
@@ -981,8 +983,9 @@ def reorderFontTables(inFile, outFile, tableOrder=None, checkChecksums=False):
 	"""Rewrite a font file, ordering the tables as recommended by the
 	OpenType specification 1.4.
 	"""
-	reader = newSFNTReader(inFile, checkChecksums=checkChecksums)
-	writer = newSFNTWriter(outFile, len(reader.tables), reader.sfntVersion, reader.flavor, reader.flavorData)
+	from fontTools.ttLib.sfnt import SFNTReader, SFNTWriter
+	reader = SFNTReader(inFile, checkChecksums=checkChecksums)
+	writer = SFNTWriter(outFile, len(reader.tables), reader.sfntVersion, reader.flavor, reader.flavorData)
 	tables = list(reader.keys())
 	for tag in sortedTagList(tables, tableOrder):
 		writer[tag] = reader[tag]
