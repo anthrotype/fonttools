@@ -15,7 +15,7 @@ a table's length chages you need to rewrite the whole file anyway.
 from __future__ import print_function, division, absolute_import
 from fontTools.misc.py23 import *
 from fontTools.misc import sstruct
-from fontTools.ttLib import getSearchRange, TTLibError, haveBrotli
+from fontTools.ttLib import getSearchRange, TTLibError
 import sys
 import struct
 from collections import OrderedDict
@@ -30,14 +30,9 @@ class SFNTReader(object):
 			sfntVersion = Tag(file.read(4))
 			file.seek(0)
 			if sfntVersion == "wOF2":
-				if haveBrotli:
-					# return new WOFF2Reader object
-					from .woff2 import WOFF2Reader
-					return super(SFNTReader, cls).__new__(WOFF2Reader)
-				else:
-					print('The WOFF2 encoder requires the Brotli Python extension:\n'
-						  'https://github.com/google/brotli', file=sys.stderr)
-					raise ImportError("No module named brotli")
+				# return new WOFF2Reader object
+				from .woff2 import WOFF2Reader
+				return super(SFNTReader, cls).__new__(WOFF2Reader)
 			elif sfntVersion == "wOFF":
 				# return new WOFFReader object
 				from .woff import WOFFReader
@@ -45,7 +40,7 @@ class SFNTReader(object):
 			elif sfntVersion == "ttcf":
 				# return new SFNTCollectionReader object
 				return super(SFNTReader, cls).__new__(SFNTCollectionReader)
-		# return default
+		# return default object
 		return super(SFNTReader, cls).__new__(cls)
 
 	def __init__(self, file, checkChecksums=1, fontNumber=-1):
@@ -170,14 +165,9 @@ class SFNTWriter(object):
 		        flavor=None, flavorData=None):
 		if cls is SFNTWriter:
 			if flavor == "woff2":
-				if haveBrotli:
-					# return new WOFF2Writer object
-					from .woff2 import WOFF2Writer
-					return super(SFNTWriter, cls).__new__(WOFF2Writer)
-				else:
-					print('The WOFF2 encoder requires the Brotli Python extension:\n'
-						  'https://github.com/google/brotli', file=sys.stderr)
-					raise ImportError("No module named brotli")
+				# return new WOFF2Writer object
+				from .woff2 import WOFF2Writer
+				return super(SFNTWriter, cls).__new__(WOFF2Writer)
 			elif flavor == "woff":
 				# return new WOFFWriter object
 				from .woff import WOFFWriter
@@ -185,7 +175,7 @@ class SFNTWriter(object):
 			elif flavor == "ttc":
 				# return new SFNTCollectionWriter object
 				raise NotImplementedError
-		# return default
+		# return default object
 		return super(SFNTWriter, cls).__new__(cls)
 
 	def __init__(self, file, numTables, sfntVersion="\000\001\000\000",
