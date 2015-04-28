@@ -55,13 +55,6 @@ elif sys.platform == "darwin":
 		# Python 3 does not have Res used by macUtils
 		haveMacSupport = 1
 
-haveBrotli = False
-try:
-	import brotli
-	haveBrotli = True
-except ImportError:
-	pass
-
 
 class TTLibError(Exception): pass
 
