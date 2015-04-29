@@ -3,30 +3,11 @@ from __future__ import print_function
 import os
 import sys
 from fontTools.misc.py23 import *
+from fontTools.misc.fileTools import makeOutputFileName, guessFileType
 from fontTools.ttLib import TTFont, reorderFontTables
 import argparse
 from subprocess import check_call, CalledProcessError
 from damaTools.misc.fileTools import ls
-
-
-### REMOVE BLOCK -- once updated to latest fontTools ###
-# from fontTools.ttx import makeOutputFileName  # un-comment this
-import re
-numberAddedRE = re.compile("#\d+$")
-def makeOutputFileName(input, outputDir, extension, overWrite):
-    dirName, fileName = os.path.split(input)
-    fileName, ext = os.path.splitext(fileName)
-    if outputDir:
-        dirName = outputDir
-    fileName = numberAddedRE.split(fileName)[0]
-    output = os.path.join(dirName, fileName + extension)
-    n = 1
-    if not overWrite:
-        while os.path.exists(output):
-            output = os.path.join(dirName, fileName + "#" + repr(n) + extension)
-            n = n + 1
-    return output
-### END REMOVE BLOCK ####
 
 
 __script__ = os.path.basename(os.path.realpath(sys.argv[0]))
@@ -37,15 +18,17 @@ INPUT_FORMATS = 'ttf|otf|woff2|woff'
 def make_output_name(infile, flavor, outdir=None, overwrite=False):
     """ Rename input file based on the specified 'flavor' and, optionally
     output directory.
-    If flavor is "sfnt" and the original extension is either ".woff" or
-    ".woff2", set the new extension to ".ttf" or ".otf" based on the
-    'sfntVersion' value.
+    If flavor is "sfnt" and the original file type is either "WOFF" or
+    "WOFF2", set the new extension to ".ttf" or ".otf" based on the
+    'sfntVersion' value. If the original file type is "TTC" or "DFONT",
+    ".ttf" extension is used.
     If 'overwrite' is False and the name clashes with an existing
     file name, an incremental "#<num>" tag will be appended like in 'ttx'.
     """
     basename, orig_ext = os.path.splitext(infile)
+    fileType = guessFileType(infile)
     if flavor == 'sfnt':
-        if orig_ext.lower() in [".woff", ".woff2"]:
+        if fileType in ["WOFF", "WOFF2"]:
             # if input file is woff, use either ".ttf" or ".otf" based on
             # the actual 'sfntVersion'
             if os.path.exists(infile):
@@ -56,10 +39,8 @@ def make_output_name(infile, flavor, outdir=None, overwrite=False):
             else:
                 raise IOError(
                     "cannot read 'sfntVersion': file '%s' not found" % infile)
-        elif orig_ext.lower() in [".ttc", ".dfont"]:
-            new_ext = '.ttf'
-        elif orig_ext.lower() == ".otc":
-            new_ext = '.otf'
+        elif fileType in ["TTC", "DFONT"]:
+            new_ext = '.ttf'  # shouldn't check sfntVersion?
         else:
             # else use the original extension
             new_ext = orig_ext
