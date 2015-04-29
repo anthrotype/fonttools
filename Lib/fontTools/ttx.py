@@ -70,33 +70,20 @@ usage: ttx [options] inputfile1 [... inputfileN]
 from __future__ import print_function, division, absolute_import
 from fontTools.misc.py23 import *
 from fontTools.ttLib import TTFont, TTLibError
-from fontTools.misc.macCreatorType import getMacCreatorAndType
 import os
 import sys
 import getopt
-import re
+
 
 def usage():
 	from fontTools import version
 	print(__doc__ % version)
 	sys.exit(2)
 
-	
-numberAddedRE = re.compile("#\d+$")
-opentypeheaderRE = re.compile('''sfntVersion=['"]OTTO["']''')
 
 def makeOutputFileName(input, outputDir, extension):
-	dirName, fileName = os.path.split(input)
-	fileName, ext = os.path.splitext(fileName)
-	if outputDir:
-		dirName = outputDir
-	fileName = numberAddedRE.split(fileName)[0]
-	output = os.path.join(dirName, fileName + extension)
-	n = 1
-	while os.path.exists(output):
-		output = os.path.join(dirName, fileName + "#" + repr(n) + extension)
-		n = n + 1
-	return output
+	from fontTools.misc.fileTools import makeOutputFileName
+	return makeOutputFileName(input, outputDir, extension)
 
 
 class Options(object):
@@ -227,54 +214,9 @@ def ttCompile(input, output, options):
 		print("finished at", time.strftime("%H:%M:%S", time.localtime(time.time())))
 
 
-def guessFileType(fileOrPath):
-	"""Get a file path or object, and return its file type."""
-	if not hasattr(fileOrPath, "read"):
-		# assume fileOrPath is a file name
-		fileName = fileOrPath
-		try:
-			f = open(fileName, "rb")
-		except IOError:
-			return None
-	else:
-		# assume fileOrPath is a readable file object
-		f = fileOrPath
-		# get file name, if it has one
-		if hasattr(f, 'name') and os.path.exists(f.name):
-			fileName = f.name
-		else:
-			fileName = ""
-	if fileName:
-		base, ext = os.path.splitext(fileName)
-		if ext == ".dfont":
-			return "DFONT"
-		cr, tp = getMacCreatorAndType(fileName)
-		if tp in ("sfnt", "FFIL"):
-			return "TTF"
-	# seek to start, but remember the current position
-	pos = f.tell()
-	f.seek(0)
-	header = f.read(256)
-	f.seek(pos)
-	head = Tag(header[:4])
-	if head == "OTTO":
-		return "OTF"
-	elif head == "ttcf":
-		return "TTC"
-	elif head in ("\0\1\0\0", "true"):
-		return "TTF"
-	elif head == "wOFF":
-		return "WOFF"
-	elif head == "wOF2":
-		return "WOFF2"
-	elif head.lower() == "<?xm":
-		# Use 'latin1' because that can't fail.
-		header = tostr(header, 'latin1')
-		if opentypeheaderRE.search(header):
-			return "OTX"
-		else:
-			return "TTX"
-	return None
+def guessFileType(fileName):
+	from fontTools.misc.fileTools import guessFileType
+	return guessFileType(fileName)
 
 
 def parseOptions(args):

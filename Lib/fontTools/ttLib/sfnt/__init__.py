@@ -15,8 +15,8 @@ a table's length chages you need to rewrite the whole file anyway.
 from __future__ import print_function, division, absolute_import
 from fontTools.misc.py23 import *
 from fontTools.misc import sstruct
+from fontTools.misc.fileTools import guessFileType
 from fontTools.ttLib import getSearchRange, TTLibError, haveMacSupport
-from fontTools.ttx import guessFileType
 import sys
 import struct
 from collections import OrderedDict
@@ -53,7 +53,7 @@ class SFNTReader(object):
 			elif fileType in ("TTF", "OTF"):
 				pass  # use default SFNTReader
 			else:
-				raise TTLibError('Unsupported file type: %s' % fileType)
+				raise TTLibError('Unsupported file type')
 		# return default object
 		return super(SFNTReader, cls).__new__(cls, infile, *args, **kwargs)
 
@@ -208,8 +208,10 @@ class SFNTWriter(object):
 		""" Return an instance of the SFNTWriter sub-class which is compatible
 		with the specified 'flavor'.
 		"""
-		if flavor and cls is SFNTWriter:
-			if flavor == "woff":
+		if cls is SFNTWriter:
+			if flavor is None:
+				pass  # use default SFNTWriter
+			elif flavor == "woff":
 				# return new WOFFWriter object
 				from .woff import WOFFWriter
 				return super(SFNTWriter, cls).__new__(
@@ -222,6 +224,8 @@ class SFNTWriter(object):
 			elif flavor == "ttc":
 				# return new TTCWriter object?
 				raise NotImplementedError
+			else:
+				raise TTLibError("Unknown flavor '%s'" % flavor)
 		# return default object
 		return super(SFNTWriter, cls).__new__(
 			cls, outfile, numTables, sfntVersion, flavor, *args, **kwargs)
