@@ -27,7 +27,10 @@ def makeOutputFileName(input, outputDir, extension, overWrite=False):
 
 
 def guessFileType(fileOrPath):
-	"""Take a path or file object, and return its file type."""
+	""" Take a path or file object, and return its file type.
+	Return None if the file type can't be found.
+	Supported file types: TTF, OTF, TTC, WOFF, WOFF2, DFONT, TTX, OTX
+	"""
 	if not hasattr(fileOrPath, "read"):
 		# assume fileOrPath is a file name
 		fileName = fileOrPath

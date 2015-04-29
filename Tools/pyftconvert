@@ -20,8 +20,8 @@ def make_output_name(infile, flavor, outdir=None, overwrite=False):
     output directory.
     If flavor is "sfnt" and the original file type is either "WOFF" or
     "WOFF2", set the new extension to ".ttf" or ".otf" based on the
-    'sfntVersion' value. If the original file type is "TTC" or "DFONT",
-    ".ttf" extension is used.
+    'sfntVersion' value. If the original file type either "TTF", "TTC"
+    or "DFONT", ".ttf" extension is used; ".otf" if file type is "OTF".
     If 'overwrite' is False and the name clashes with an existing
     file name, an incremental "#<num>" tag will be appended like in 'ttx'.
     """
@@ -39,8 +39,10 @@ def make_output_name(infile, flavor, outdir=None, overwrite=False):
             else:
                 raise IOError(
                     "cannot read 'sfntVersion': file '%s' not found" % infile)
-        elif fileType in ["TTC", "DFONT"]:
-            new_ext = '.ttf'  # shouldn't check sfntVersion?
+        elif fileType in ["TTF", "TTC", "DFONT"]:
+            new_ext = '.ttf'  # shouldn't check sfntVersion for TTC and DFONT?
+        elif fileType == 'OTF':
+            new_ext = '.otf'
         else:
             # else use the original extension
             new_ext = orig_ext
