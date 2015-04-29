@@ -38,12 +38,12 @@ class SFNTReader(object):
 					TTCReader, infile, *args, **kwargs)
 			elif fileType == "WOFF":
 				# return new WOFFReader object
-				from .woff import WOFFReader
+				from fontTools.ttLib.sfnt.woff import WOFFReader
 				return super(SFNTReader, cls).__new__(
 					WOFFReader, infile, *args, **kwargs)
 			elif fileType == "WOFF2":
 				# return new WOFF2Reader object
-				from .woff2 import WOFF2Reader
+				from fontTools.ttLib.sfnt.woff2 import WOFF2Reader
 				return super(SFNTReader, cls).__new__(
 					WOFF2Reader, infile, *args, **kwargs)
 			elif fileType == "DFONT":
@@ -213,12 +213,12 @@ class SFNTWriter(object):
 				pass  # use default SFNTWriter
 			elif flavor == "woff":
 				# return new WOFFWriter object
-				from .woff import WOFFWriter
+				from fontTools.ttLib.sfnt.woff import WOFFWriter
 				return super(SFNTWriter, cls).__new__(
 					WOFFWriter, outfile, numTables, sfntVersion, flavor, *args, **kwargs)
 			elif flavor == "woff2":
 				# return new WOFF2Writer object
-				from .woff2 import WOFF2Writer
+				from fontTools.ttLib.sfnt.woff2 import WOFF2Writer
 				return super(SFNTWriter, cls).__new__(
 					WOFF2Writer, outfile, numTables, sfntVersion, flavor, *args, **kwargs)
 			elif flavor == "ttc":
