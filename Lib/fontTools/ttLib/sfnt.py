@@ -21,6 +21,21 @@ import struct
 
 class SFNTReader(object):
 
+	def __new__(cls, infile, *args, **kwargs):
+		""" Return an instance of the SFNTReader sub-class which is compatible
+		with the input file type.
+		"""
+		if cls is SFNTReader:
+			sfntVersion = Tag(infile.read(4))
+			infile.seek(0)
+			if sfntVersion == "wOF2":
+				# return new WOFF2Reader object
+				from fontTools.ttLib.woff2 import WOFF2Reader
+				return super(SFNTReader, cls).__new__(
+					WOFF2Reader, infile, *args, **kwargs)
+		# return default object
+		return super(SFNTReader, cls).__new__(cls, infile, *args, **kwargs)
+
 	def __init__(self, file, checkChecksums=1, fontNumber=-1):
 		self.file = file
 		self.checkChecksums = checkChecksums
@@ -96,6 +111,21 @@ class SFNTReader(object):
 
 
 class SFNTWriter(object):
+
+	def __new__(cls, outfile, numTables, sfntVersion="\000\001\000\000",
+		        flavor=None, *args, **kwargs):
+		""" Return an instance of the SFNTWriter sub-class which is compatible
+		with the specified 'flavor'.
+		"""
+		if cls is SFNTWriter:
+			if flavor == "woff2":
+				# return new WOFF2Writer object
+				from fontTools.ttLib.woff2 import WOFF2Writer
+				return super(SFNTWriter, cls).__new__(
+					WOFF2Writer, outfile, numTables, sfntVersion, flavor, *args, **kwargs)
+		# return default object
+		return super(SFNTWriter, cls).__new__(
+			cls, outfile, numTables, sfntVersion, flavor, *args, **kwargs)
 
 	def __init__(self, file, numTables, sfntVersion="\000\001\000\000",
 		     flavor=None, flavorData=None):
