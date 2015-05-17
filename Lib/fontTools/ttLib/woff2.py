@@ -38,7 +38,10 @@ class WOFF2Reader(SFNTReader):
 
 		self.file.seek(0)
 		self.DirectoryEntry = WOFF2DirectoryEntry
-		sstruct.unpack(woff2DirectoryFormat, self.file.read(woff2DirectorySize), self)
+		data = self.file.read(woff2DirectorySize)
+		if len(data) != woff2DirectorySize:
+			raise TTLibError('Not a WOFF2 font (not enough data)')
+		sstruct.unpack(woff2DirectoryFormat, data, self)
 
 		self.tables = {}
 		self.tableOrder = []
