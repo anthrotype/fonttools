@@ -931,13 +931,13 @@ class WOFF2GlyfTable(getTableClass('glyf')):
 		self.glyphStream += triplets.tostring()
 
 	def getSideBearings(self):
-		sideBearings = []
+		sideBearings = {}
 		for glyphName in self.glyphOrder:
 			glyph = self.glyphs[glyphName]
 			if glyph.numberOfContours == 0:
-				sideBearings.append(0)
+				sideBearings[glyphName] = 0
 			else:
-				sideBearings.append(glyph.xMin)
+				sideBearings[glyphName] = glyph.xMin
 		return sideBearings
 
 
@@ -954,33 +954,61 @@ class WOFF2HmtxTable(getTableClass('hmtx')):
 		self.ttFont['hhea'].numberOfHMetrics = numberOfHMetrics
 
 	def reconstruct(self, rawData, sideBearings):
-		assert len(sideBearings) == self.ttFont['maxp'].numGlyphs
+		numGlyphs = self.ttFont['maxp'].numGlyphs
+		assert len(sideBearings) == numGlyphs
 		numberOfHMetrics = self.ttFont['hhea'].numberOfHMetrics
 		assert len(rawData) == 2 * numberOfHMetrics
-		assert len(sideBearings) >= numberOfHMetrics
+		assert numGlyphs >= numberOfHMetrics
+
+		# decompile advance widths
 		advances = array.array("h", rawData)
 		if sys.byteorder != "big":
 			advances.byteswap()
+
+		# join advance widths and side bearings
 		self.metrics = {}
+		allMetrics = []
 		glyphOrder = self.ttFont.getGlyphOrder()
 		for i in range(numberOfHMetrics):
 			glyphName = glyphOrder[i]
-			self.metrics[glyphName] = [advances[i], sideBearings[i]]
-		return self.compile(self.ttFont)
+			advance = advances[i]
+			sb = sideBearings[glyphName]
+			self.metrics[glyphName] = [advance, sb]
+			allMetrics.extend([advance, sb])
+
+		# decompile additional side bearings
+		additionalMetrics = []
+		if len(sideBearings) > numberOfHMetrics:
+			lastIndex = numberOfHMetrics
+			lastAdvance = advances[lastIndex-1]
+			while lastIndex < numGlyphs:
+				glyphName = glyphOrder[i]
+				sb = sideBearings[glyphName]
+				self.metrics[glyphName] = [lastAdvance, sb]
+				additionalMetrics.append(sb)
+				lastIndex += 1
+
+		# re-compile hmtx data
+		allMetrics = array.array("h", allMetrics)
+		if sys.byteorder != "big":
+			allMetrics.byteswap()
+		data = allMetrics.tostring()
+		additionalMetrics = array.array("h", additionalMetrics)
+		if sys.byteorder != "big":
+			additionalMetrics.byteswap()
+		data = data + additionalMetrics.tostring()
+		return data
 
 	def transform(self, data):
+		numberOfHMetrics = self.ttFont['hhea'].numberOfHMetrics
 		self.decompile(data, self.ttFont)
-		advances = [self.metrics[glyphName][0] for glyphName in self.ttFont.getGlyphOrder()]
-		lastAdvance = advances[-1]
-		lastIndex = len(advances)
-		while advances[lastIndex-2] == lastAdvance:
-			lastIndex -= 1
-			if lastIndex <= 1:
-				# all advances are equal
-				lastIndex = 1
-				break
-		advances = advances[:lastIndex]
-		assert len(advances) == self.ttFont['hhea'].numberOfHMetrics
+		glyphOrder = self.ttFont.getGlyphOrder()
+		assert len(glyphOrder) >= numberOfHMetrics
+		# keep only advance widths, and drop all side bearings
+		advances = []
+		for i in range(numberOfHMetrics):
+			glyphName = glyphOrder[i]
+			advances.append(self.metrics[glyphName][0])
 		advances = array.array("h", advances)
 		if sys.byteorder != "big":
 			advances.byteswap()
