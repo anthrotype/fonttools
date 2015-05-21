@@ -75,7 +75,7 @@ class WOFF2Reader(SFNTReader):
 		tag = Tag(tag)
 		entry = self.tables[tag]
 		rawData = entry.loadData(self.transformBuffer)
-		if tag not in woff2TransformedTableTags:
+		if tag not in woff2TransformedTableTags and tag != 'hmtx':
 			return rawData
 		if hasattr(entry, 'data'):
 			# already reconstructed
@@ -89,10 +89,31 @@ class WOFF2Reader(SFNTReader):
 		return entry.data
 
 	def reconstructTable(self, tag, rawData):
-		"""Reconstruct 'glyf' or 'loca' tables from transformed 'rawData'."""
-		if tag not in woff2TransformedTableTags:
+		"""Reconstruct 'glyf', 'loca' or 'hmtx' tables from transformed 'rawData'."""
+		if tag not in woff2TransformedTableTags and tag != 'hmtx':
 			raise TTLibError("Transform for table '%s' is unknown" % tag)
-		if tag == 'glyf':
+		if tag == 'hmtx':
+			# check whether hmtx was actually transformed or not
+			numberOfHMetrics, = struct.unpack('>H', self['hhea'][-2:])
+			numGlyphs, = struct.unpack('>H', self['maxp'][4:6])
+			numberOfSideBearings = numGlyphs - numberOfHMetrics
+			trueHmtxLength = 4 * numberOfHMetrics + numberOfSideBearings * 2
+			transformedHmtxLength = 2 * numberOfHMetrics
+			actualHmtxLength = self.tables['hmtx'].length
+			if actualHmtxLength == trueHmtxLength:
+				# hmtx was not transformed
+				data = rawData
+			elif actualHmtxLength == transformedHmtxLength:
+				if not hasattr(self, 'glyfTable'):
+					# make sure glyf is loaded first
+					self['glyf']
+				# reconstruct hmtx lsb from xMin values in glyf's bbox
+				sideBearings = self.glyfTable.getSideBearings()
+				hmtxTable = WOFF2HmtxTable(numGlyphs, numberOfHMetrics)
+				data = hmtxTable.reconstruct(rawData, sideBearings)
+			else:
+				raise TTLibError("can't reconstruct 'hmtx' table: invalid size")
+		elif tag == 'glyf':
 			# reconstruct both glyf and loca
 			self.glyfTable = WOFF2GlyfTable()
 			data = self.glyfTable.reconstruct(rawData)
@@ -134,6 +155,9 @@ class WOFF2Writer(SFNTWriter):
 
 		self.tables = {}
 		self.tableOrder = []
+
+		# until we check that all xMin are equal to lsb
+		self.doHmtxTransform = False
 
 	def __setitem__(self, tag, data):
 		"""Associate new entry named 'tag' with raw table data."""
@@ -191,8 +215,8 @@ class WOFF2Writer(SFNTWriter):
 		# write tables to transformBuffer
 		for tag, entry in tables:
 			data = entry.data
-			if tag in woff2TransformedTableTags:
-				# transform glyf and loca tables
+			if tag in woff2TransformedTableTags or (tag == 'hmtx' and self.doHmtxTransform):
+				# transform glyf and loca tables, and possibly also hmtx table
 				data = self.transformTable(tag, data)
 			entry.offset = self.nextTableOffset
 			entry.saveData(self.transformBuffer, data)
@@ -294,33 +318,45 @@ class WOFF2Writer(SFNTWriter):
 			return  # CFF font, skip
 
 		# make an empty TTFont instance to temporarily store tables
-		ttFont = TTFont()
+		ttFont = TTFont(lazy=False)
 		glyfTable = ttFont['glyf'] = getTableClass('glyf')()
 		locaTable = ttFont['loca'] = getTableClass('loca')()
 		headTable = ttFont['head'] = getTableClass('head')()
 		maxpTable = ttFont['maxp'] = getTableClass('maxp')()
+		hheaTable = ttFont['hhea'] = getTableClass('hhea')()
+		hmtxTable = ttFont['hmtx'] = getTableClass('hmtx')()
 
-		# decompile loca data
-		locaData = tables['loca'].data
-		indexFormat = headData[51]
+		# get number of glyphs from maxp
 		numGlyphs, = struct.unpack(">H", tables['maxp'].data[4:6])
-		headTable.indexToLocFormat = indexFormat
 		maxpTable.numGlyphs = numGlyphs
-		locaTable.decompile(locaData, ttFont)
 
-		# decompile glyf data
-		glyfData = tables['glyf'].data
+		# make dummy glyph order
 		glyphOrder = ["glyph%d" % i for i in range(numGlyphs)]
 		ttFont.setGlyphOrder(glyphOrder)
-		ttFont.lazy = False
-		glyfTable.decompile(glyfData, ttFont)
+
+		# decompile hhea data
+		hheaTable.decompile(tables['hhea'].data, ttFont)
+
+		# decompile hmtx data and get left side bearings
+		hmtxTable.decompile(tables['hmtx'].data, ttFont)
+
+		# decompile loca data
+		indexFormat = headData[51]
+		headTable.indexToLocFormat = indexFormat
+		locaTable.decompile(tables['loca'].data, ttFont)
+
+		# decompile glyf data
+		glyfTable.decompile(tables['glyf'].data, ttFont)
 
 		# re-compile glyf data
 		locations = []
 		currentLocation = 0
 		dataList = []
+		allXMinIsLsb = True
 		for glyphName in glyfTable.glyphOrder:
 			glyph = glyfTable.glyphs[glyphName]
+			if glyph.numberOfContours and hmtxTable[glyphName][1] != glyph.xMin:
+				allXMinIsLsb = False
 			glyphData = glyph.compile(glyfTable, recalcBBoxes=False)
 			# pad glyph locations to multiples of 4 bytes
 			glyphData = padData(glyphData)
@@ -329,6 +365,8 @@ class WOFF2Writer(SFNTWriter):
 			dataList.append(glyphData)
 		locations.append(currentLocation)
 		tables['glyf'].data = bytesjoin(dataList)
+		# if for all glyphs xMin is equal to lsb, we can drop lsb from hmtx
+		self.doHmtxTransform = allXMinIsLsb
 
 		# re-compile loca data
 		locaTable.set(locations)
@@ -341,9 +379,14 @@ class WOFF2Writer(SFNTWriter):
 
 	def transformTable(self, tag, data):
 		"""Transform 'glyf' or 'loca' table data."""
-		if tag not in woff2TransformedTableTags:
+		if tag not in woff2TransformedTableTags and tag != 'hmtx':
 			raise TTLibError("Transform for table '%s' is unknown" % tag)
-		if tag == "loca":
+		if tag == "hmtx":
+			numberOfHMetrics, = struct.unpack('>H', self.tables['hhea'].data[-2:])
+			numGlyphs, = struct.unpack('>H', self.tables['maxp'].data[4:6])
+			hmtxTable = WOFF2HmtxTable(numGlyphs, numberOfHMetrics)
+			data = hmtxTable.transform(data)
+		elif tag == "loca":
 			data = b""
 		elif tag == "glyf":
 			indexFormat = byteord(self.tables['head'].data[51])
@@ -506,7 +549,11 @@ class WOFF2DirectoryEntry(DirectoryEntry):
 		data = bytechr(self.flags)
 		if (self.flags & 0x3f) == 0x3f:
 			data += struct.pack('>4s', self.tag)
-		data += packBase128(self.origLength)
+		if self.tag == 'hmtx':
+			# instead of origLength, for hmtx we write only the transformLength
+			data += packBase128(self.length)
+		else:
+			data += packBase128(self.origLength)
 		if self.tag in woff2TransformedTableTags:
 			data += packBase128(self.length)
 		return data
@@ -882,6 +929,63 @@ class WOFF2GlyfTable(getTableClass('glyf')):
 
 		self.flagStream += flags.tostring()
 		self.glyphStream += triplets.tostring()
+
+	def getSideBearings(self):
+		sideBearings = []
+		for glyphName in self.glyphOrder:
+			glyph = self.glyphs[glyphName]
+			if glyph.numberOfContours == 0:
+				sideBearings.append(0)
+			else:
+				sideBearings.append(glyph.xMin)
+		return sideBearings
+
+
+class WOFF2HmtxTable(getTableClass('hmtx')):
+
+	def __init__(self, numGlyphs, numberOfHMetrics):
+		self.tableTag = Tag('hmtx')
+		self.ttFont = TTFont(flavor="woff2", recalcBBoxes=False)
+		self.ttFont['maxp'] = getTableClass('maxp')()
+		self.ttFont['maxp'].numGlyphs = numGlyphs
+		glyphOrder = ["glyph%d" % i for i in range(numGlyphs)]
+		self.ttFont.setGlyphOrder(glyphOrder)
+		self.ttFont['hhea'] = getTableClass('hhea')()
+		self.ttFont['hhea'].numberOfHMetrics = numberOfHMetrics
+
+	def reconstruct(self, rawData, sideBearings):
+		assert len(sideBearings) == self.ttFont['maxp'].numGlyphs
+		numberOfHMetrics = self.ttFont['hhea'].numberOfHMetrics
+		assert len(rawData) == 2 * numberOfHMetrics
+		assert len(sideBearings) >= numberOfHMetrics
+		advances = array.array("h", rawData)
+		if sys.byteorder != "big":
+			advances.byteswap()
+		self.metrics = {}
+		glyphOrder = self.ttFont.getGlyphOrder()
+		for i in range(numberOfHMetrics):
+			glyphName = glyphOrder[i]
+			self.metrics[glyphName] = [advances[i], sideBearings[i]]
+		return self.compile(self.ttFont)
+
+	def transform(self, data):
+		self.decompile(data, self.ttFont)
+		advances = [self.metrics[glyphName][0] for glyphName in self.ttFont.getGlyphOrder()]
+		lastAdvance = advances[-1]
+		lastIndex = len(advances)
+		while advances[lastIndex-2] == lastAdvance:
+			lastIndex -= 1
+			if lastIndex <= 1:
+				# all advances are equal
+				lastIndex = 1
+				break
+		advances = advances[:lastIndex]
+		assert len(advances) == self.ttFont['hhea'].numberOfHMetrics
+		advances = array.array("h", advances)
+		if sys.byteorder != "big":
+			advances.byteswap()
+		data = advances.tostring()
+		return data
 
 
 class WOFF2FlavorData(WOFFFlavorData):
