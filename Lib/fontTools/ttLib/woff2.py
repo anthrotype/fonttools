@@ -434,6 +434,8 @@ woff2UnknownTagFormat = """
 
 woff2UnknownTagSize = sstruct.calcsize(woff2UnknownTagFormat)
 
+woff2UnknownTagIndex = 0x3F
+
 woff2Base128MaxSize = 5
 woff2DirectoryEntryMaxSize = woff2FlagsSize + woff2UnknownTagSize + 2 * woff2Base128MaxSize
 
@@ -469,7 +471,7 @@ def getKnownTagIndex(tag):
 	for i in range(len(woff2KnownTags)):
 		if tag == woff2KnownTags[i]:
 			return i
-	return 0x3F
+	return woff2UnknownTagIndex
 
 
 class WOFF2DirectoryEntry(DirectoryEntry):
@@ -482,9 +484,13 @@ class WOFF2DirectoryEntry(DirectoryEntry):
 		file.seek(pos + consumed)
 
 	def fromString(self, data):
+		if len(data) < 1:
+			raise TTLibError("can't read table 'flags': not enough data")
 		dummy, data = sstruct.unpack2(woff2FlagsFormat, data, self)
 		if self.flags & 0x3F == 0x3F:
 			# if bits [0..5] of the flags byte == 63, read a 4-byte arbitrary tag value
+			if len(data) < woff2UnknownTagSize:
+				raise TTLibError("can't read table 'tag': not enough data")
 			dummy, data = sstruct.unpack2(woff2UnknownTagFormat, data, self)
 		else:
 			# otherwise, tag is derived from a fixed 'Known Tags' table
@@ -933,12 +939,13 @@ def unpackBase128(data):
 	  File "<stdin>", line 1, in ?
 	TTLibError: UIntBase128 value exceeds 2**32-1
 	"""
+	if len(data) == 0:
+		raise TTLibError('not enough data to unpack UIntBase128')
 	result = 0
-	assert len(data) > 0
 	if byteord(data[0]) == 0x80:
 		# font must be rejected if UIntBase128 value starts with 0x80
 		raise TTLibError('UIntBase128 value must not start with leading zeros')
-	for i in range(5):
+	for i in range(woff2Base128MaxSize):
 		if len(data) == 0:
 			raise TTLibError('not enough data to unpack UIntBase128')
 		code = byteord(data[0])
