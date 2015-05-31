@@ -3,7 +3,7 @@ from fontTools.misc.py23 import *
 from fontTools.ttLib import TTFont, TTLibError
 from fontTools.ttLib.woff2 import (WOFF2Reader, woff2DirectorySize, woff2DirectoryFormat,
 	woff2FlagsSize, woff2UnknownTagSize, woff2Base128MaxSize, WOFF2DirectoryEntry,
-	getKnownTagIndex, packBase128, base128Size)
+	getKnownTagIndex, packBase128, base128Size, woff2UnknownTagIndex)
 import unittest
 import sstruct
 
@@ -122,8 +122,8 @@ class WOFF2DirectoryEntryTest(unittest.TestCase):
 		with self.assertRaises(TTLibError):
 			self.entry.fromString(data)
 
-	def test_read_fromFile(self):
-		unknown_tag = b'ABCD'
+	def test_fromFile(self):
+		unknown_tag = b'ZZZZ'
 		data = bytechr(getKnownTagIndex(unknown_tag))
 		data += unknown_tag
 		data += packBase128(12345)
@@ -131,6 +131,25 @@ class WOFF2DirectoryEntryTest(unittest.TestCase):
 		f = StringIO(data + b'\0'*100)
 		self.entry.fromFile(f)
 		self.assertEqual(f.tell(), expected_pos)
+
+	def test_glyf_toString(self):
+		self.entry.tag = Tag('glyf')
+		self.entry.flags = getKnownTagIndex(self.entry.tag)
+		self.entry.origLength = 123456
+		self.entry.length = 12345
+		expected_size = (woff2FlagsSize + base128Size(self.entry.origLength) +
+			base128Size(self.entry.length))
+		data = self.entry.toString()
+		self.assertEqual(len(data), expected_size)
+
+	def test_unknown_toString(self):
+		self.entry.tag = Tag('ZZZZ')
+		self.entry.flags = woff2UnknownTagIndex
+		self.entry.origLength = 123456
+		expected_size = (woff2FlagsSize + woff2UnknownTagSize +
+			base128Size(self.entry.origLength))
+		data = self.entry.toString()
+		self.assertEqual(len(data), expected_size)
 
 
 class WOFF2GlyfTableTest(unittest.TestCase):
