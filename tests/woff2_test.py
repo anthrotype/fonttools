@@ -6,16 +6,31 @@ from fontTools.ttLib.woff2 import (WOFF2Reader, woff2DirectorySize, woff2Directo
 	getKnownTagIndex, packBase128, base128Size, woff2UnknownTagIndex)
 import unittest
 import sstruct
+import brotli
+import tempfile
+import contextlib
+import sys
+import os
 
 
-ttxfile = 'data/Lobster.ttx'
+ttxpath = 'data/Lobster.ttx'
 testfont = TTFont(None, recalcBBoxes=False, recalcTimestamp=False)
 woff2file = StringIO()
 
 
+@contextlib.contextmanager
+def nostdout():
+	""" Silence stdout """
+	tmp = tempfile.TemporaryFile()
+	oldstdout = os.dup(sys.stdout.fileno())
+	os.dup2(tmp.fileno(), 1)
+	yield
+	os.dup2(oldstdout, 1)
+
+
 def setUpModule():
 	""" called once, before anything else in this module """
-	testfont.importXML(ttxfile, quiet=True)
+	testfont.importXML(ttxpath, quiet=True)
 	testfont.flavor = "woff2"
 	testfont.save(woff2file, reorderTables=False)
 
@@ -54,13 +69,23 @@ class WOFF2ReaderTest(unittest.TestCase):
 			WOFF2Reader(StringIO(incomplete_header))
 
 	def test_num_tables(self):
-		tags = list(testfont.keys())
-		if "GlyphOrder" in tags:
-			tags.remove("GlyphOrder")
+		tags = [t for t in testfont.keys() if t != "GlyphOrder"]
 		data = woff2file.read(woff2DirectorySize)
 		header = sstruct.unpack(woff2DirectoryFormat, data)
 		self.assertEqual(header['numTables'], len(tags))
 
+	def test_table_tags(self):
+		tags = set([t for t in testfont.keys() if t != "GlyphOrder"])
+		reader = WOFF2Reader(woff2file)
+		self.assertEqual(set(reader.keys()), tags)
+
+	def test_bad_total_compressed_size(self):
+		data = woff2file.read(woff2DirectorySize)
+		header = sstruct.unpack(woff2DirectoryFormat, data)
+		header['totalCompressedSize'] -= 1
+		data = sstruct.pack(woff2DirectoryFormat, header)
+		with self.assertRaises(brotli.error), nostdout():
+			WOFF2Reader(StringIO(data + woff2file.read()))
 
 
 class WOFF2WriterTest(unittest.TestCase):
