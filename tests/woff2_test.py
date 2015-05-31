@@ -87,6 +87,14 @@ class WOFF2ReaderTest(unittest.TestCase):
 		with self.assertRaises(brotli.error), nostdout():
 			WOFF2Reader(StringIO(data + woff2file.read()))
 
+	def test_no_match_actual_length(self):
+		data = woff2file.read(woff2DirectorySize)
+		header = sstruct.unpack(woff2DirectoryFormat, data)
+		header['length'] -= 1
+		data = sstruct.pack(woff2DirectoryFormat, header)
+		with self.assertRaises(TTLibError):
+			WOFF2Reader(StringIO(data + woff2file.read()))
+
 
 class WOFF2WriterTest(unittest.TestCase):
 
