@@ -3,6 +3,8 @@ from fontTools.misc.py23 import *
 from fontTools.ttLib import TTFont, TTLibError
 from fontTools.ttLib import woff2
 import unittest
+import sstruct
+from io import BytesIO
 
 
 test_font = 'data/Lobster.ttx'
@@ -23,11 +25,11 @@ class WOFF2ReaderTest(unittest.TestCase):
 	@classmethod
 	def setUpClass(cls):
 		""" called once, before any tests """
-		ttx = TTFont(None, recalcBBoxes=False, recalcTimestamp=False)
-		ttx.importXML(test_font, quiet=True)
-		ttx.flavor = "woff2"
-		cls.file = StringIO()
-		ttx.save(cls.file, reorderTables=False)
+		cls.ttFont = TTFont(None, recalcBBoxes=False, recalcTimestamp=False)
+		cls.ttFont.importXML(test_font, quiet=True)
+		cls.ttFont.flavor = "woff2"
+		cls.file = BytesIO()
+		cls.ttFont.save(cls.file, reorderTables=False)
 
 	@classmethod
 	def tearDownClass(cls):
@@ -43,12 +45,42 @@ class WOFF2ReaderTest(unittest.TestCase):
 
 	def test_bad_signature(self):
 		with self.assertRaises(TTLibError):
-			woff2.WOFF2Reader(StringIO(b'\xff\xff\xff\xff\xff'))
+			woff2.WOFF2Reader(BytesIO(b"wOFF"))
 
-	def test_not_enough_data(self):
-		incomplete_dir = self.file.read(47)
+	def test_not_enough_data_header(self):
+		incomplete_header = self.file.read(woff2.woff2DirectorySize - 1)
 		with self.assertRaises(TTLibError):
-			woff2.WOFF2Reader(StringIO(incomplete_dir))
+			woff2.WOFF2Reader(BytesIO(incomplete_header))
+
+	def test_num_tables(self):
+		tags = list(self.ttFont.keys())
+		if "GlyphOrder" in tags:
+			tags.remove("GlyphOrder")
+		data = self.file.read(woff2.woff2DirectorySize)
+		header = sstruct.unpack(woff2.woff2DirectoryFormat, data)
+		self.assertEqual(header['numTables'], len(tags))
+
+	def test_not_enough_data_table_flags(self):
+		incomplete_flags = self.file.read(woff2.woff2DirectorySize)
+		with self.assertRaises(TTLibError):
+			woff2.WOFF2Reader(BytesIO(incomplete_flags))
+
+	def test_not_enough_data_table_unknown_tag(self):
+		flags_offset = woff2.woff2DirectorySize
+		buf = bytearray(
+			flags_offset + woff2.woff2FlagsSize + woff2.woff2UnknownTagSize)
+		self.file.readinto(buf)
+		buf[flags_offset] = 0x3F
+		incomplete_buf = buf[:-1]
+		with self.assertRaises(TTLibError):
+			woff2.WOFF2Reader(BytesIO(incomplete_buf))
+
+	def test_table_reserved_flags(self):
+		buf = bytearray(woff2.woff2DirectorySize + woff2.woff2FlagsSize)
+		self.file.readinto(buf)
+		buf[-1] |= 0xC0
+		with self.assertRaises(TTLibError):
+			woff2.WOFF2Reader(BytesIO(buf))
 
 
 class WOFF2WriterTest(unittest.TestCase):
