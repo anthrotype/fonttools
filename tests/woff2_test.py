@@ -2,17 +2,22 @@ from __future__ import print_function, division, absolute_import, unicode_litera
 from fontTools.misc.py23 import *
 from fontTools.ttLib import TTFont, TTLibError
 from fontTools.ttLib.woff2 import (WOFF2Reader, woff2DirectorySize, woff2DirectoryFormat,
-	woff2FlagsSize, woff2UnknownTagSize, woff2Base128MaxSize)
+	woff2FlagsSize, woff2UnknownTagSize, woff2Base128MaxSize, WOFF2DirectoryEntry,
+	getKnownTagIndex, packBase128, base128Size)
 import unittest
 import sstruct
 
 
-test_font = 'data/Lobster.ttx'
+ttxfile = 'data/Lobster.ttx'
+testfont = TTFont(None, recalcBBoxes=False, recalcTimestamp=False)
+woff2file = StringIO()
 
 
 def setUpModule():
 	""" called once, before anything else in this module """
-	pass
+	testfont.importXML(ttxfile, quiet=True)
+	testfont.flavor = "woff2"
+	testfont.save(woff2file, reorderTables=False)
 
 
 def tearDownModule():
@@ -25,11 +30,7 @@ class WOFF2ReaderTest(unittest.TestCase):
 	@classmethod
 	def setUpClass(cls):
 		""" called once, before any tests """
-		cls.ttFont = TTFont(None, recalcBBoxes=False, recalcTimestamp=False)
-		cls.ttFont.importXML(test_font, quiet=True)
-		cls.ttFont.flavor = "woff2"
-		cls.file = StringIO()
-		cls.ttFont.save(cls.file, reorderTables=False)
+		pass
 
 	@classmethod
 	def tearDownClass(cls):
@@ -38,7 +39,7 @@ class WOFF2ReaderTest(unittest.TestCase):
 
 	def setUp(self):
 		""" called multiple times, before every test method """
-		self.file.seek(0)
+		woff2file.seek(0)
 
 	def tearDown(self):
 		""" called multiple times, after every test method """
@@ -48,51 +49,17 @@ class WOFF2ReaderTest(unittest.TestCase):
 			WOFF2Reader(StringIO(b"wOFF"))
 
 	def test_not_enough_data_header(self):
-		incomplete_header = self.file.read(woff2DirectorySize - 1)
+		incomplete_header = woff2file.read(woff2DirectorySize - 1)
 		with self.assertRaises(TTLibError):
 			WOFF2Reader(StringIO(incomplete_header))
 
 	def test_num_tables(self):
-		tags = list(self.ttFont.keys())
+		tags = list(testfont.keys())
 		if "GlyphOrder" in tags:
 			tags.remove("GlyphOrder")
-		data = self.file.read(woff2DirectorySize)
+		data = woff2file.read(woff2DirectorySize)
 		header = sstruct.unpack(woff2DirectoryFormat, data)
 		self.assertEqual(header['numTables'], len(tags))
-
-	def test_not_enough_data_table_flags(self):
-		incomplete_flags = self.file.read(woff2DirectorySize)
-		with self.assertRaises(TTLibError):
-			WOFF2Reader(StringIO(incomplete_flags))
-
-	def test_not_enough_data_table_unknown_tag(self):
-		flags_offset = woff2DirectorySize
-		buf = bytearray(
-			self.file.read(
-				flags_offset + woff2FlagsSize + woff2UnknownTagSize))
-		buf[flags_offset] = 0x3F
-		incomplete_buf = buf[:-1]
-		with self.assertRaises(TTLibError):
-			WOFF2Reader(StringIO(incomplete_buf))
-
-	def test_table_reserved_flags(self):
-		buf = bytearray(
-			self.file.read(woff2DirectorySize + woff2FlagsSize))
-		buf[-1] |= 0xC0
-		with self.assertRaises(TTLibError):
-			WOFF2Reader(StringIO(buf))
-
-	def test_not_enough_data_origLength(self):
-		flags_offset = woff2DirectorySize
-		self.file.seek(flags_offset)
-		flags = byteord(self.file.read(woff2FlagsSize))
-		origLength_offset = flags_offset + woff2FlagsSize
-		if flags & 0x3F == 0x3F:
-			origLength_offset += woff2UnknownTagSize
-		self.file.seek(0)
-		buf = bytearray(self.file.read(origLength_offset))
-		with self.assertRaises(TTLibError):
-			WOFF2Reader(StringIO(buf))
 
 
 
@@ -130,10 +97,40 @@ class WOFF2DirectoryEntryTest(unittest.TestCase):
 
 	def setUp(self):
 		""" called multiple times, before every test method """
-		pass
+		self.entry = WOFF2DirectoryEntry()
 
 	def tearDown(self):
 		""" called multiple times, after every test method """
+
+	def test_not_enough_data_table_flags(self):
+		with self.assertRaises(TTLibError):
+			self.entry.fromString(b"")
+
+	def test_not_enough_data_table_unknown_tag(self):
+		incomplete_buf = bytearray([0x3F, 0, 0, 0])
+		with self.assertRaises(TTLibError):
+			self.entry.fromString(bytes(incomplete_buf))
+
+	def test_table_reserved_flags(self):
+		with self.assertRaises(TTLibError):
+			self.entry.fromString(bytechr(0xC0))
+
+	def test_loca_zero_transformLength(self):
+		data = bytechr(getKnownTagIndex(b'loca'))
+		data += packBase128(127)
+		data += packBase128(1)
+		with self.assertRaises(TTLibError):
+			self.entry.fromString(data)
+
+	def test_read_fromFile(self):
+		unknown_tag = b'ABCD'
+		data = bytechr(getKnownTagIndex(unknown_tag))
+		data += unknown_tag
+		data += packBase128(12345)
+		expected_pos = len(data)
+		f = StringIO(data + b'\0'*100)
+		self.entry.fromFile(f)
+		self.assertEqual(f.tell(), expected_pos)
 
 
 class WOFF2GlyfTableTest(unittest.TestCase):
