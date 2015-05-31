@@ -85,22 +85,9 @@ class WOFF2WriterTest(unittest.TestCase):
 
 class WOFF2DirectoryEntryTest(unittest.TestCase):
 
-	@classmethod
-	def setUpClass(cls):
-		""" called once, before any tests """
-		pass
-
-	@classmethod
-	def tearDownClass(cls):
-		""" called once, after all tests, if setUpClass successful """
-		pass
-
 	def setUp(self):
 		""" called multiple times, before every test method """
 		self.entry = WOFF2DirectoryEntry()
-
-	def tearDown(self):
-		""" called multiple times, after every test method """
 
 	def test_not_enough_data_table_flags(self):
 		with self.assertRaises(TTLibError):
@@ -132,13 +119,21 @@ class WOFF2DirectoryEntryTest(unittest.TestCase):
 		self.entry.fromFile(f)
 		self.assertEqual(f.tell(), expected_pos)
 
-	def test_glyf_toString(self):
+	def test_transformed_toString(self):
 		self.entry.tag = Tag('glyf')
 		self.entry.flags = getKnownTagIndex(self.entry.tag)
 		self.entry.origLength = 123456
 		self.entry.length = 12345
 		expected_size = (woff2FlagsSize + base128Size(self.entry.origLength) +
 			base128Size(self.entry.length))
+		data = self.entry.toString()
+		self.assertEqual(len(data), expected_size)
+
+	def test_known_toString(self):
+		self.entry.tag = Tag('head')
+		self.entry.flags = getKnownTagIndex(self.entry.tag)
+		self.entry.origLength = 54
+		expected_size = (woff2FlagsSize + base128Size(self.entry.origLength))
 		data = self.entry.toString()
 		self.assertEqual(len(data), expected_size)
 
