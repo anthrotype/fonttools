@@ -511,7 +511,7 @@ class WOFF2DirectoryEntry(DirectoryEntry):
 	def toString(self):
 		data = bytechr(self.flags)
 		if (self.flags & 0x3f) == 0x3f:
-			data += struct.pack('>4s', self.tag)
+			data += struct.pack('>4s', self.tag.tobytes())
 		data += packBase128(self.origLength)
 		if self.tag in woff2TransformedTableTags:
 			data += packBase128(self.length)
