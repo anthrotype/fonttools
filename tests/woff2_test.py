@@ -1,4 +1,5 @@
 from __future__ import print_function, division, absolute_import, unicode_literals
+import env
 from fontTools.misc.py23 import *
 from fontTools.ttLib import TTFont, TTLibError
 from fontTools.ttLib.woff2 import (WOFF2Reader, woff2DirectorySize, woff2DirectoryFormat,
