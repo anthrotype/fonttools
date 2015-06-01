@@ -20,13 +20,13 @@ woff2file = StringIO()
 
 
 @contextlib.contextmanager
-def nostdout():
-	""" Silence stdout """
-	tmp = tempfile.TemporaryFile()
-	oldstdout = os.dup(sys.stdout.fileno())
-	os.dup2(tmp.fileno(), 1)
-	yield
-	os.dup2(oldstdout, 1)
+def no_stdout():
+	fd = sys.stdout.fileno()
+	with os.fdopen(os.dup(fd), 'w') as old_stdout, open(os.devnull, 'w') as tmp:
+		os.dup2(tmp.fileno(), fd)
+		yield
+		os.dup2(old_stdout.fileno(), fd)
+
 
 
 def setUpModule():
@@ -85,7 +85,7 @@ class WOFF2ReaderTest(unittest.TestCase):
 		header = sstruct.unpack(woff2DirectoryFormat, data)
 		header['totalCompressedSize'] -= 1
 		data = sstruct.pack(woff2DirectoryFormat, header)
-		with self.assertRaises(brotli.error), nostdout():
+		with self.assertRaises(brotli.error), no_stdout():
 			WOFF2Reader(StringIO(data + woff2file.read()))
 
 	def test_no_match_actual_length(self):
