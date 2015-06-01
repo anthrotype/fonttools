@@ -8,13 +8,13 @@ from fontTools.ttLib.woff2 import (WOFF2Reader, woff2DirectorySize, woff2Directo
 import unittest
 import sstruct
 import brotli
-import tempfile
 import contextlib
 import sys
 import os
 
 
-ttxpath = 'data/Lobster.ttx'
+dirname = os.path.abspath(os.path.dirname(os.path.realpath(__file__)))
+ttxpath = os.path.join(dirname, 'data/Lobster.ttx')
 testfont = TTFont(None, recalcBBoxes=False, recalcTimestamp=False)
 woff2file = StringIO()
 
