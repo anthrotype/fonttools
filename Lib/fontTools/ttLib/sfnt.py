@@ -31,10 +31,9 @@ class SFNTReader(object):
 			if sfntVersion == "wOF2":
 				# return new WOFF2Reader object
 				from fontTools.ttLib.woff2 import WOFF2Reader
-				return super(SFNTReader, cls).__new__(
-					WOFF2Reader, infile, *args, **kwargs)
+				return object.__new__(WOFF2Reader)
 		# return default object
-		return super(SFNTReader, cls).__new__(cls, infile, *args, **kwargs)
+		return object.__new__(cls)
 
 	def __init__(self, file, checkChecksums=1, fontNumber=-1):
 		self.file = file
@@ -121,11 +120,9 @@ class SFNTWriter(object):
 			if flavor == "woff2":
 				# return new WOFF2Writer object
 				from fontTools.ttLib.woff2 import WOFF2Writer
-				return super(SFNTWriter, cls).__new__(
-					WOFF2Writer, outfile, numTables, sfntVersion, flavor, *args, **kwargs)
+				return object.__new__(WOFF2Writer)
 		# return default object
-		return super(SFNTWriter, cls).__new__(
-			cls, outfile, numTables, sfntVersion, flavor, *args, **kwargs)
+		return object.__new__(cls)
 
 	def __init__(self, file, numTables, sfntVersion="\000\001\000\000",
 		     flavor=None, flavorData=None):
