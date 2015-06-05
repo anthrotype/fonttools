@@ -1,8 +1,7 @@
 from __future__ import print_function, division, absolute_import, unicode_literals
-import env
 from fontTools.misc.py23 import *
 from fontTools.ttLib import TTFont, TTLibError
-from fontTools.ttLib.woff2 import (WOFF2Reader, woff2DirectorySize, woff2DirectoryFormat,
+from .woff2 import (WOFF2Reader, woff2DirectorySize, woff2DirectoryFormat,
 	woff2FlagsSize, woff2UnknownTagSize, woff2Base128MaxSize, WOFF2DirectoryEntry,
 	getKnownTagIndex, packBase128, base128Size, woff2UnknownTagIndex)
 import unittest
@@ -14,7 +13,8 @@ import os
 
 
 dirname = os.path.abspath(os.path.dirname(os.path.realpath(__file__)))
-ttxpath = os.path.join(dirname, 'data/Lobster.ttx')
+ttxpath = os.path.join(dirname, 'test_data/TestTTF-Regular.ttx')
+assert os.path.exists(ttxpath)
 testfont = TTFont(None, recalcBBoxes=False, recalcTimestamp=False)
 woff2file = StringIO()
 
@@ -83,7 +83,7 @@ class WOFF2ReaderTest(unittest.TestCase):
 	def test_bad_total_compressed_size(self):
 		data = woff2file.read(woff2DirectorySize)
 		header = sstruct.unpack(woff2DirectoryFormat, data)
-		header['totalCompressedSize'] -= 1
+		header['totalCompressedSize'] = 0
 		data = sstruct.pack(woff2DirectoryFormat, header)
 		with self.assertRaises(brotli.error), no_stdout():
 			WOFF2Reader(StringIO(data + woff2file.read()))
