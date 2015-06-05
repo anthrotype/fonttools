@@ -7,7 +7,6 @@ from .woff2 import (WOFF2Reader, woff2DirectorySize, woff2DirectoryFormat,
 import unittest
 import sstruct
 import brotli
-import contextlib
 import sys
 import os
 
@@ -17,16 +16,6 @@ ttxpath = os.path.join(dirname, 'test_data/TestTTF-Regular.ttx')
 assert os.path.exists(ttxpath)
 testfont = TTFont(None, recalcBBoxes=False, recalcTimestamp=False)
 woff2file = StringIO()
-
-
-@contextlib.contextmanager
-def no_stdout():
-	fd = sys.stdout.fileno()
-	with os.fdopen(os.dup(fd), 'w') as old_stdout, open(os.devnull, 'w') as tmp:
-		os.dup2(tmp.fileno(), fd)
-		yield
-		os.dup2(old_stdout.fileno(), fd)
-
 
 
 def setUpModule():
@@ -85,7 +74,7 @@ class WOFF2ReaderTest(unittest.TestCase):
 		header = sstruct.unpack(woff2DirectoryFormat, data)
 		header['totalCompressedSize'] = 0
 		data = sstruct.pack(woff2DirectoryFormat, header)
-		with self.assertRaises(brotli.error), no_stdout():
+		with self.assertRaises(brotli.error):
 			WOFF2Reader(StringIO(data + woff2file.read()))
 
 	def test_no_match_actual_length(self):
