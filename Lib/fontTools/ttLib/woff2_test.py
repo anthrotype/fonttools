@@ -201,13 +201,6 @@ class WOFF2FlavorDataTest(unittest.TestCase):
 		cls.compressed_metadata = brotli.compress(cls.xml_metadata, mode=brotli.MODE_TEXT)
 		cls.fontdata = b'\0'*96  # 4-byte aligned
 
-	def test_reader_is_None(self):
-		flavorData = WOFF2FlavorData()
-		self.assertEqual(flavorData.majorVersion, None)
-		self.assertEqual(flavorData.minorVersion, None)
-		self.assertEqual(flavorData.metaData, None)
-		self.assertEqual(flavorData.privData, None)
-
 	def test_get_metaData_no_privData(self):
 		infile = StringIO(self.fontdata + self.compressed_metadata)
 		reader = DummyReader(infile)
