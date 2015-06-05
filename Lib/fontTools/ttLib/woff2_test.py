@@ -196,7 +196,7 @@ class WOFF2FlavorDataTest(unittest.TestCase):
 		""" called once, before any tests """
 		xml_filename = os.path.join(dirname, 'test_data', 'test_woff2_metadata.xml')
 		assert os.path.exists(xml_filename)
-		with open(xml_filename, 'r') as f:
+		with open(xml_filename, 'rb') as f:
 			cls.xml_metadata = f.read()
 		cls.compressed_metadata = brotli.compress(cls.xml_metadata, mode=brotli.MODE_TEXT)
 		cls.fontdata = b'\0'*96  # 4-byte aligned
