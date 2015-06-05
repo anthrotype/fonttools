@@ -12,17 +12,26 @@ import os
 
 
 dirname = os.path.abspath(os.path.dirname(os.path.realpath(__file__)))
-ttxpath = os.path.join(dirname, 'test_data/TestTTF-Regular.ttx')
-assert os.path.exists(ttxpath)
-testfont = TTFont(None, recalcBBoxes=False, recalcTimestamp=False)
-woff2file = StringIO()
+ttxname = os.path.join(dirname, 'test_data', 'TestTTF-Regular.ttx')
+otxname = os.path.join(dirname, 'test_data', 'TestOTF-Regular.otx')
+ttf = TTFont(None, recalcBBoxes=False, recalcTimestamp=False)
+otf = TTFont(None, recalcBBoxes=False, recalcTimestamp=False)
+tt_woff2_file = StringIO()
+ot_woff2_file = StringIO()
 
 
 def setUpModule():
 	""" called once, before anything else in this module """
-	testfont.importXML(ttxpath, quiet=True)
-	testfont.flavor = "woff2"
-	testfont.save(woff2file, reorderTables=False)
+	assert os.path.exists(ttxname)
+	assert os.path.exists(otxname)
+	# import TT-flavoured test font and save it as woff2
+	ttf.importXML(ttxname, quiet=True)
+	ttf.flavor = "woff2"
+	ttf.save(tt_woff2_file, reorderTables=False)
+	# import CFF-flavoured test font and save it as woff2
+	otf.importXML(otxname, quiet=True)
+	otf.flavor = "woff2"
+	otf.save(ot_woff2_file, reorderTables=False)
 
 
 def tearDownModule():
@@ -30,60 +39,72 @@ def tearDownModule():
 	pass
 
 
-class WOFF2ReaderTest(unittest.TestCase):
+class TTFTestCase(unittest.TestCase):
 
 	@classmethod
 	def setUpClass(cls):
 		""" called once, before any tests """
-		pass
-
-	@classmethod
-	def tearDownClass(cls):
-		""" called once, after all tests, if setUpClass successful """
-		pass
+		cls.file = StringIO(tt_woff2_file.getvalue())
+		cls.font = ttf
 
 	def setUp(self):
 		""" called multiple times, before every test method """
-		woff2file.seek(0)
+		self.file.seek(0)
 
-	def tearDown(self):
-		""" called multiple times, after every test method """
+
+class OTFTestCase(TTFTestCase):
+
+	@classmethod
+	def setUpClass(cls):
+		""" called once, before any tests """
+		cls.file = StringIO(ot_woff2_file.getvalue())
+		cls.font = otf
+
+
+class WOFF2ReaderTest(TTFTestCase):
 
 	def test_bad_signature(self):
 		with self.assertRaises(TTLibError):
 			WOFF2Reader(StringIO(b"wOFF"))
 
 	def test_not_enough_data_header(self):
-		incomplete_header = woff2file.read(woff2DirectorySize - 1)
+		incomplete_header = self.file.read(woff2DirectorySize - 1)
 		with self.assertRaises(TTLibError):
 			WOFF2Reader(StringIO(incomplete_header))
 
-	def test_num_tables(self):
-		tags = [t for t in testfont.keys() if t != "GlyphOrder"]
-		data = woff2file.read(woff2DirectorySize)
-		header = sstruct.unpack(woff2DirectoryFormat, data)
-		self.assertEqual(header['numTables'], len(tags))
-
-	def test_table_tags(self):
-		tags = set([t for t in testfont.keys() if t != "GlyphOrder"])
-		reader = WOFF2Reader(woff2file)
-		self.assertEqual(set(reader.keys()), tags)
-
 	def test_bad_total_compressed_size(self):
-		data = woff2file.read(woff2DirectorySize)
+		data = self.file.read(woff2DirectorySize)
 		header = sstruct.unpack(woff2DirectoryFormat, data)
 		header['totalCompressedSize'] = 0
 		data = sstruct.pack(woff2DirectoryFormat, header)
 		with self.assertRaises(brotli.error):
-			WOFF2Reader(StringIO(data + woff2file.read()))
+			WOFF2Reader(StringIO(data + self.file.read()))
 
 	def test_no_match_actual_length(self):
-		data = woff2file.read(woff2DirectorySize)
+		data = self.file.read(woff2DirectorySize)
 		header = sstruct.unpack(woff2DirectoryFormat, data)
 		header['length'] -= 1
 		data = sstruct.pack(woff2DirectoryFormat, header)
 		with self.assertRaises(TTLibError):
-			WOFF2Reader(StringIO(data + woff2file.read()))
+			WOFF2Reader(StringIO(data + self.file.read()))
+
+
+class WOFF2ReaderTest_TTF(TTFTestCase):
+
+	def test_num_tables(self):
+		tags = [t for t in self.font.keys() if t != "GlyphOrder"]
+		data = self.file.read(woff2DirectorySize)
+		header = sstruct.unpack(woff2DirectoryFormat, data)
+		self.assertEqual(header['numTables'], len(tags))
+
+	def test_table_tags(self):
+		tags = set([t for t in self.font.keys() if t != "GlyphOrder"])
+		reader = WOFF2Reader(self.file)
+		self.assertEqual(set(reader.keys()), tags)
+
+
+class WOFF2ReaderTest_OTF(OTFTestCase, WOFF2ReaderTest_TTF):
+	pass
 
 
 class WOFF2WriterTest(unittest.TestCase):
