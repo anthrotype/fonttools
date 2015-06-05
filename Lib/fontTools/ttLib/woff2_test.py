@@ -3,12 +3,19 @@ from fontTools.misc.py23 import *
 from fontTools.ttLib import TTFont, TTLibError
 from .woff2 import (WOFF2Reader, woff2DirectorySize, woff2DirectoryFormat,
 	woff2FlagsSize, woff2UnknownTagSize, woff2Base128MaxSize, WOFF2DirectoryEntry,
-	getKnownTagIndex, packBase128, base128Size, woff2UnknownTagIndex)
+	getKnownTagIndex, packBase128, base128Size, woff2UnknownTagIndex,
+	WOFF2FlavorData)
 import unittest
 import sstruct
-import brotli
 import sys
 import os
+
+haveBrotli = False
+try:
+	import brotli
+	haveBrotli = True
+except ImportError:
+	pass
 
 
 dirname = os.path.abspath(os.path.dirname(os.path.realpath(__file__)))
@@ -21,47 +28,67 @@ ot_woff2_file = StringIO()
 
 
 def setUpModule():
-	""" called once, before anything else in this module """
+	if not haveBrotli:
+		raise unittest.SkipTest("No module named brotli")
 	assert os.path.exists(ttxname)
 	assert os.path.exists(otxname)
-	# import TT-flavoured test font and save it as woff2
+	# import TT-flavoured test font and save it to woff2
 	ttf.importXML(ttxname, quiet=True)
 	ttf.flavor = "woff2"
 	ttf.save(tt_woff2_file, reorderTables=False)
-	# import CFF-flavoured test font and save it as woff2
+	# import CFF-flavoured test font and save it to woff2
 	otf.importXML(otxname, quiet=True)
 	otf.flavor = "woff2"
 	otf.save(ot_woff2_file, reorderTables=False)
 
 
-def tearDownModule():
-	""" called once, before anything else in this module """
-	pass
-
-
-class TTFTestCase(unittest.TestCase):
-
-	@classmethod
-	def setUpClass(cls):
-		""" called once, before any tests """
-		cls.file = StringIO(tt_woff2_file.getvalue())
-		cls.font = ttf
+class BasicTestCase(unittest.TestCase):
 
 	def setUp(self):
-		""" called multiple times, before every test method """
+		# called multiple times, before every test method
 		self.file.seek(0)
 
 
-class OTFTestCase(TTFTestCase):
+class TT_TestCase(BasicTestCase):
 
 	@classmethod
 	def setUpClass(cls):
-		""" called once, before any tests """
+		# called once, before any tests
+		cls.file = StringIO(tt_woff2_file.getvalue())
+		cls.font = ttf
+
+
+class CFF_TestCase(BasicTestCase):
+
+	@classmethod
+	def setUpClass(cls):
+		# called once, before any tests
 		cls.file = StringIO(ot_woff2_file.getvalue())
 		cls.font = otf
 
 
-class WOFF2ReaderTest(TTFTestCase):
+class WOFF2ReaderTest_TTF(TT_TestCase):
+	""" Tests specific to TT-flavored fonts. """
+
+	def test_num_tables(self):
+		tags = [t for t in self.font.keys() if t != "GlyphOrder"]
+		data = self.file.read(woff2DirectorySize)
+		header = sstruct.unpack(woff2DirectoryFormat, data)
+		self.assertEqual(header['numTables'], len(tags))
+
+	def test_table_tags(self):
+		tags = set([t for t in self.font.keys() if t != "GlyphOrder"])
+		reader = WOFF2Reader(self.file)
+		self.assertEqual(set(reader.keys()), tags)
+
+
+class WOFF2ReaderTest_OTF(CFF_TestCase, WOFF2ReaderTest_TTF):
+	""" Tests specific to CFF-flavored fonts. """
+	pass
+
+
+class WOFF2ReaderTest_Any(TT_TestCase):
+	""" Generic tests not specific to TT- or CFF-flavored fonts. """
 
 	def test_bad_signature(self):
 		with self.assertRaises(TTLibError):
@@ -87,44 +114,6 @@ class WOFF2ReaderTest(TTFTestCase):
 		data = sstruct.pack(woff2DirectoryFormat, header)
 		with self.assertRaises(TTLibError):
 			WOFF2Reader(StringIO(data + self.file.read()))
-
-
-class WOFF2ReaderTest_TTF(TTFTestCase):
-
-	def test_num_tables(self):
-		tags = [t for t in self.font.keys() if t != "GlyphOrder"]
-		data = self.file.read(woff2DirectorySize)
-		header = sstruct.unpack(woff2DirectoryFormat, data)
-		self.assertEqual(header['numTables'], len(tags))
-
-	def test_table_tags(self):
-		tags = set([t for t in self.font.keys() if t != "GlyphOrder"])
-		reader = WOFF2Reader(self.file)
-		self.assertEqual(set(reader.keys()), tags)
-
-
-class WOFF2ReaderTest_OTF(OTFTestCase, WOFF2ReaderTest_TTF):
-	pass
-
-
-class WOFF2WriterTest(unittest.TestCase):
-
-	@classmethod
-	def setUpClass(cls):
-		""" called once, before any tests """
-		pass
-
-	@classmethod
-	def tearDownClass(cls):
-		""" called once, after all tests, if setUpClass successful """
-		pass
-
-	def setUp(self):
-		""" called multiple times, before every test method """
-		pass
-
-	def tearDown(self):
-		""" called multiple times, after every test method """
 
 
 class WOFF2DirectoryEntryTest(unittest.TestCase):
@@ -191,7 +180,57 @@ class WOFF2DirectoryEntryTest(unittest.TestCase):
 		self.assertEqual(len(data), expected_size)
 
 
-class WOFF2GlyfTableTest(unittest.TestCase):
+class DummyReader(object):
+
+	def __init__(self, file):
+		self.file = file
+		for attr in ('majorVersion', 'minorVersion', 'metaOffset', 'metaLength',
+				'metaOrigLength', 'privLength', 'privOffset'):
+			setattr(self, attr, 0)
+
+
+class WOFF2FlavorDataTest(unittest.TestCase):
+
+	@classmethod
+	def setUpClass(cls):
+		""" called once, before any tests """
+		xml_filename = os.path.join(dirname, 'test_data', 'test_woff2_metadata.xml')
+		assert os.path.exists(xml_filename)
+		with open(xml_filename, 'r') as f:
+			cls.xml_metadata = f.read()
+		cls.compressed_metadata = brotli.compress(cls.xml_metadata, mode=brotli.MODE_TEXT)
+		cls.fontdata = b'\0'*96  # 4-byte aligned
+
+	def test_reader_is_None(self):
+		flavorData = WOFF2FlavorData()
+		self.assertEqual(flavorData.majorVersion, None)
+		self.assertEqual(flavorData.minorVersion, None)
+		self.assertEqual(flavorData.metaData, None)
+		self.assertEqual(flavorData.privData, None)
+
+	def test_get_metaData_no_privData(self):
+		infile = StringIO(self.fontdata + self.compressed_metadata)
+		reader = DummyReader(infile)
+		reader.metaOffset = len(self.fontdata)
+		reader.metaLength = len(self.compressed_metadata)
+		reader.metaOrigLength = len(self.xml_metadata)
+		flavorData = WOFF2FlavorData(reader)
+		self.assertEqual(self.xml_metadata, flavorData.metaData)
+
+	@classmethod
+	def tearDownClass(cls):
+		""" called once, after all tests, if setUpClass successful """
+		pass
+
+	def setUp(self):
+		""" called multiple times, before every test method """
+		pass
+
+	def tearDown(self):
+		""" called multiple times, after every test method """
+
+
+class WOFF2WriterTest(unittest.TestCase):
 
 	@classmethod
 	def setUpClass(cls):
@@ -211,7 +250,7 @@ class WOFF2GlyfTableTest(unittest.TestCase):
 		""" called multiple times, after every test method """
 
 
-class WOFF2FlavorDataTest(unittest.TestCase):
+class WOFF2GlyfTableTest(unittest.TestCase):
 
 	@classmethod
 	def setUpClass(cls):
