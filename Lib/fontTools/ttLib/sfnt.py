@@ -118,10 +118,8 @@ class SFNTWriter(object):
 		"""
 		flavor = None
 		if kwargs and 'flavor' in kwargs:
-			print('keyword args')
 			flavor = kwargs['flavor']
 		elif args and len(args) > 3:
-			print('positional args')
 			flavor = args[3]
 		if cls is SFNTWriter:
 			if flavor == "woff2":
