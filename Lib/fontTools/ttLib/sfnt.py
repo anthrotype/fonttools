@@ -21,11 +21,12 @@ import struct
 
 class SFNTReader(object):
 
-	def __new__(cls, infile, *args, **kwargs):
+	def __new__(cls, *args, **kwargs):
 		""" Return an instance of the SFNTReader sub-class which is compatible
 		with the input file type.
 		"""
-		if cls is SFNTReader:
+		if args and cls is SFNTReader:
+			infile = args[0]
 			sfntVersion = Tag(infile.read(4))
 			infile.seek(0)
 			if sfntVersion == "wOF2":
@@ -111,11 +112,15 @@ class SFNTReader(object):
 
 class SFNTWriter(object):
 
-	def __new__(cls, outfile, numTables, sfntVersion="\000\001\000\000",
-		        flavor=None, *args, **kwargs):
+	def __new__(cls, *args, **kwargs):
 		""" Return an instance of the SFNTWriter sub-class which is compatible
 		with the specified 'flavor'.
 		"""
+		flavor = None
+		if kwargs and 'flavor' in kwargs:
+			flavor = kwargs['flavor']
+		elif args and len(args) > 3:
+			flavor = args[3]
 		if cls is SFNTWriter:
 			if flavor == "woff2":
 				# return new WOFF2Writer object
