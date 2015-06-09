@@ -536,6 +536,8 @@ class WOFF2GlyfTable(getTableClass('glyf')):
 		data = transformedGlyfData
 		inputDataSize = len(data)
 
+		if inputDataSize < woff2GlyfTableFormatSize:
+			raise TTLibError("not enough 'glyf' data")
 		dummy, data = sstruct.unpack2(woff2GlyfTableFormat, data, self)
 		numGlyphs = self.numGlyphs
 		substreamOffset = woff2GlyfTableFormatSize
