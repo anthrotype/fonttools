@@ -7,7 +7,6 @@ from .woff2 import (WOFF2Reader, woff2DirectorySize, woff2DirectoryFormat,
 	WOFF2FlavorData, woff2TransformedTableTags)
 import unittest
 import sstruct
-import sys
 import os
 
 haveBrotli = False
@@ -89,7 +88,7 @@ class WOFF2ReaderTest(unittest.TestCase):
 		reader = WOFF2Reader(self.file)
 		self.assertEqual(set(reader.keys()), tags)
 
-	def test_get_normal_tables_data(self):
+	def test_get_normal_tables(self):
 		woff2Reader = WOFF2Reader(self.file)
 		for tag in self.font.reader.keys():
 			if tag in woff2TransformedTableTags:
