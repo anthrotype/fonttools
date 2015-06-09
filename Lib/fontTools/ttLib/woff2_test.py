@@ -312,12 +312,12 @@ class WOFF2GlyfTableTest(unittest.TestCase):
 		glyfEntry = reader.tables['glyf']
 		cls.transformedGlyfData = glyfEntry.loadData(reader.transformBuffer)
 
-	def test_reconstruct_glyf(self):
+	def test_reconstruct(self):
 		table = WOFF2GlyfTable()
 		reconstructedData = table.reconstruct(self.transformedGlyfData)
 		self.assertEqual(self.origGlyfData, reconstructedData)
 
-	def test_reconstruct_loca(self):
+	def test_getLocaData(self):
 		table = WOFF2GlyfTable()
 		table.reconstruct(self.transformedGlyfData)
 		self.assertEqual(self.origLocaData, table.getLocaData())
