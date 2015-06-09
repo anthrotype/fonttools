@@ -4,7 +4,7 @@ from fontTools.ttLib import TTFont, TTLibError
 from .woff2 import (WOFF2Reader, woff2DirectorySize, woff2DirectoryFormat,
 	woff2FlagsSize, woff2UnknownTagSize, woff2Base128MaxSize, WOFF2DirectoryEntry,
 	getKnownTagIndex, packBase128, base128Size, woff2UnknownTagIndex,
-	WOFF2FlavorData, woff2TransformedTableTags)
+	WOFF2FlavorData, woff2TransformedTableTags, WOFF2GlyfTable)
 import unittest
 import sstruct
 import os
@@ -47,7 +47,8 @@ class WOFF2ReaderTest(unittest.TestCase):
 	@classmethod
 	def setUpClass(cls):
 		cls.file = StringIO(CFF_WOFF2.getvalue())
-		cls.font = TTFont(cls.file, recalcBBoxes=False, recalcTimestamp=False)
+		cls.font = TTFont(None, recalcBBoxes=False, recalcTimestamp=False)
+		cls.font.importXML(OTX, quiet=True)
 
 	def setUp(self):
 		self.file.seek(0)
@@ -90,11 +91,11 @@ class WOFF2ReaderTest(unittest.TestCase):
 
 	def test_get_normal_tables(self):
 		woff2Reader = WOFF2Reader(self.file)
-		for tag in self.font.reader.keys():
-			if tag in woff2TransformedTableTags:
-				# these need specific tests
-				continue
-			self.assertEqual(self.font.reader[tag], woff2Reader[tag])
+		for tag in [t for t in self.font.keys() if t not in
+				woff2TransformedTableTags + ('head', 'GlyphOrder')]:
+			# transformed tables need specific tests
+			origData = self.font.getTableData(tag)
+			self.assertEqual(origData, woff2Reader[tag])
 
 	def test_reconstruct_unknown(self):
 		reader = WOFF2Reader(self.file)
@@ -108,7 +109,8 @@ class WOFF2ReaderTTFTest(unittest.TestCase):
 	@classmethod
 	def setUpClass(cls):
 		cls.file = StringIO(TT_WOFF2.getvalue())
-		cls.font = TTFont(cls.file, recalcBBoxes=False, recalcTimestamp=False)
+		cls.font = TTFont(None, recalcBBoxes=False, recalcTimestamp=False)
+		cls.font.importXML(TTX, quiet=True)
 
 	def setUp(self):
 		self.file.seek(0)
@@ -121,12 +123,12 @@ class WOFF2ReaderTTFTest(unittest.TestCase):
 		return reconstructedData
 
 	def test_reconstruct_glyf(self):
-		origData = self.font.reader['glyf']
+		origData = self.font.getTableData('glyf')
 		reconstructedData = self.reconstruct_table('glyf')
 		self.assertEqual(origData, reconstructedData)
 
 	def test_reconstruct_loca(self):
-		origData = self.font.reader['loca']
+		origData = self.font.getTableData('loca')
 		reconstructedData = self.reconstruct_table('loca')
 		self.assertEqual(origData, reconstructedData)
 
@@ -134,6 +136,15 @@ class WOFF2ReaderTTFTest(unittest.TestCase):
 		reader = WOFF2Reader(self.file)
 		with self.assertRaises(TTLibError):
 			reader.reconstructTable('loca', b'\x00')
+
+	def test_head_table_transform_flag(self):
+		origData = self.font.getTableData('head')
+		origFlags = byteord(origData[16])
+		reader = WOFF2Reader(self.file)
+		modifiedData = reader['head']
+		modifiedFlags = byteord(modifiedData[16])
+		self.assertNotEqual(origData, modifiedData)
+		self.assertEqual(modifiedFlags, origFlags | 0x08)
 
 
 class WOFF2DirectoryEntryTest(unittest.TestCase):
@@ -288,20 +299,19 @@ class WOFF2GlyfTableTest(unittest.TestCase):
 
 	@classmethod
 	def setUpClass(cls):
-		""" called once, before any tests """
-		pass
+		infile = StringIO(TT_WOFF2.getvalue())
+		reader = WOFF2Reader(infile)
+		font = TTFont(None, recalcBBoxes=False, recalcTimestamp=False)
+		font.importXML(TTX, quiet=True)
+		cls.origGlyfData = font.getTableData('glyf')
+		glyfEntry = reader.tables['glyf']
+		cls.transformedGlyfData = glyfEntry.loadData(reader.transformBuffer)
+		cls.origLocaData = font.getTableData('loca')
 
-	@classmethod
-	def tearDownClass(cls):
-		""" called once, after all tests, if setUpClass successful """
-		pass
-
-	def setUp(self):
-		""" called multiple times, before every test method """
-		pass
-
-	def tearDown(self):
-		""" called multiple times, after every test method """
+	def test_reconstruct_glyf(self):
+		table = WOFF2GlyfTable()
+		reconstructedData = table.reconstruct(self.transformedGlyfData)
+		self.assertEqual(self.origGlyfData, reconstructedData)
 
 
 if __name__ == "__main__":
