@@ -303,12 +303,12 @@ class WOFF2GlyfTableTest(unittest.TestCase):
 
 	@classmethod
 	def setUpClass(cls):
-		infile = StringIO(TT_WOFF2.getvalue())
-		reader = WOFF2Reader(infile)
 		font = TTFont(None, recalcBBoxes=False, recalcTimestamp=False)
 		font.importXML(TTX, quiet=True)
 		cls.origGlyfData = font.getTableData('glyf')
 		cls.origLocaData = font.getTableData('loca')
+		infile = StringIO(TT_WOFF2.getvalue())
+		reader = WOFF2Reader(infile)
 		glyfEntry = reader.tables['glyf']
 		cls.transformedGlyfData = glyfEntry.loadData(reader.transformBuffer)
 
@@ -321,6 +321,18 @@ class WOFF2GlyfTableTest(unittest.TestCase):
 		table = WOFF2GlyfTable()
 		table.reconstruct(self.transformedGlyfData)
 		self.assertEqual(self.origLocaData, table.getLocaData())
+
+	def test_decode_glyf_header_not_enough_data(self):
+		table = WOFF2GlyfTable()
+		with self.assertRaises(TTLibError):
+			table.reconstruct("")
+
+	def test_decode_glyf_table_incorrect_size(self):
+		table = WOFF2GlyfTable()
+		with self.assertRaises(TTLibError):
+			table.reconstruct(self.transformedGlyfData + b"\x00")
+		with self.assertRaises(TTLibError):
+			table.reconstruct(self.transformedGlyfData[:-1])
 
 
 if __name__ == "__main__":
