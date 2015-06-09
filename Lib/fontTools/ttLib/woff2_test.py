@@ -200,27 +200,49 @@ class WOFF2FlavorDataTest(unittest.TestCase):
 			cls.xml_metadata = f.read()
 		cls.compressed_metadata = brotli.compress(cls.xml_metadata, mode=brotli.MODE_TEXT)
 		cls.fontdata = b'\0'*96  # 4-byte aligned
+		cls.privData = bytes(bytearray([i for i in range(32, 127)]))
+
+	def setUp(self):
+		""" called multiple times, before every test method """
+		self.infile = StringIO(self.fontdata)
+		self.infile.seek(0, 2)
 
 	def test_get_metaData_no_privData(self):
-		infile = StringIO(self.fontdata + self.compressed_metadata)
-		reader = DummyReader(infile)
+		self.infile.write(self.compressed_metadata)
+		reader = DummyReader(self.infile)
 		reader.metaOffset = len(self.fontdata)
 		reader.metaLength = len(self.compressed_metadata)
 		reader.metaOrigLength = len(self.xml_metadata)
 		flavorData = WOFF2FlavorData(reader)
 		self.assertEqual(self.xml_metadata, flavorData.metaData)
 
-	@classmethod
-	def tearDownClass(cls):
-		""" called once, after all tests, if setUpClass successful """
-		pass
+	def test_get_privData_no_metaData(self):
+		self.infile.write(self.privData)
+		reader = DummyReader(self.infile)
+		reader.privOffset = len(self.fontdata)
+		reader.privLength = len(self.privData)
+		flavorData = WOFF2FlavorData(reader)
+		self.assertEqual(self.privData, flavorData.privData)
 
-	def setUp(self):
-		""" called multiple times, before every test method """
-		pass
+	def test_get_metaData_and_privData(self):
+		self.infile.write(self.compressed_metadata + self.privData)
+		reader = DummyReader(self.infile)
+		reader.metaOffset = len(self.fontdata)
+		reader.metaLength = len(self.compressed_metadata)
+		reader.metaOrigLength = len(self.xml_metadata)
+		reader.privOffset = reader.metaOffset + reader.metaLength
+		reader.privLength = len(self.privData)
+		flavorData = WOFF2FlavorData(reader)
+		self.assertEqual(self.xml_metadata, flavorData.metaData)
+		self.assertEqual(self.privData, flavorData.privData)
 
-	def tearDown(self):
-		""" called multiple times, after every test method """
+	def test_get_major_minorVersion(self):
+		reader = DummyReader(self.infile)
+		reader.majorVersion = 1
+		reader.minorVersion = 1
+		flavorData = WOFF2FlavorData(reader)
+		self.assertEqual(flavorData.majorVersion, 1)
+		self.assertEqual(flavorData.minorVersion, 1)
 
 
 class WOFF2WriterTest(unittest.TestCase):
