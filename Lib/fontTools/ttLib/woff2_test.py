@@ -137,14 +137,18 @@ class WOFF2ReaderTTFTest(unittest.TestCase):
 		with self.assertRaises(TTLibError):
 			reader.reconstructTable('loca', b'\x00')
 
-	def test_head_table_transform_flag(self):
+	def test_head_transform_flag(self):
 		origData = self.font.getTableData('head')
+		origData = origData[:8] + b'\0\0\0\0' + origData[12:]
 		origFlags = byteord(origData[16])
 		reader = WOFF2Reader(self.file)
 		modifiedData = reader['head']
+		modifiedData = modifiedData[:8] + b'\0\0\0\0' + modifiedData[12:]
 		modifiedFlags = byteord(modifiedData[16])
-		self.assertNotEqual(origData, modifiedData)
-		self.assertEqual(modifiedFlags, origFlags | 0x08)
+		self.assertNotEqual(origFlags, modifiedFlags)
+		restoredData = bytearray(modifiedData)
+		restoredData[16] = restoredData[16] & ~0x08
+		self.assertEqual(origData, bytes(restoredData))
 
 
 class WOFF2DirectoryEntryTest(unittest.TestCase):
