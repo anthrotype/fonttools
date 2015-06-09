@@ -308,14 +308,20 @@ class WOFF2GlyfTableTest(unittest.TestCase):
 		font = TTFont(None, recalcBBoxes=False, recalcTimestamp=False)
 		font.importXML(TTX, quiet=True)
 		cls.origGlyfData = font.getTableData('glyf')
+		cls.origLocaData = font.getTableData('loca')
 		glyfEntry = reader.tables['glyf']
 		cls.transformedGlyfData = glyfEntry.loadData(reader.transformBuffer)
-		cls.origLocaData = font.getTableData('loca')
 
 	def test_reconstruct_glyf(self):
 		table = WOFF2GlyfTable()
 		reconstructedData = table.reconstruct(self.transformedGlyfData)
 		self.assertEqual(self.origGlyfData, reconstructedData)
+
+	def test_reconstruct_loca(self):
+		table = WOFF2GlyfTable()
+		table.reconstruct(self.transformedGlyfData)
+		reconstructedData = table.getLocaData()
+		self.assertEqual(self.origLocaData, reconstructedData)
 
 
 if __name__ == "__main__":
