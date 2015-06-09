@@ -109,11 +109,54 @@ class WOFF2ReaderTTFTest(unittest.TestCase):
 	def setUp(self):
 		self.file.seek(0)
 
-	def test_get_reconstructed_glyf_data(self):
-		origGlyfData = self.font.reader['glyf']
+	def reconstruct_table(self, tag):
 		reader = WOFF2Reader(self.file)
-		reconstructedGlyfData = reader['glyf']
-		self.assertEqual(origGlyfData, reconstructedGlyfData)
+		entry = reader.tables[tag]
+		transformedData = entry.loadData(reader.transformBuffer)
+		reconstructedData = reader.reconstructTable(tag, transformedData)
+		return reconstructedData
+
+	def test_reconstruct_glyf(self):
+		origData = self.font.reader['glyf']
+		reconstructedData = self.reconstruct_table('glyf')
+		self.assertEqual(origData, reconstructedData)
+
+	def test_reconstruct_loca(self):
+		origData = self.font.reader['loca']
+		reconstructedData = self.reconstruct_table('loca')
+		self.assertEqual(origData, reconstructedData)
+
+	def test_get_already_reconstructed(self):
+		reader = WOFF2Reader(self.file)
+		glyfEntry = reader.tables['glyf']
+		self.assertFalse(hasattr(reader, 'glyfTable'))
+		self.assertFalse(hasattr(glyfEntry, 'data'))
+		glyfData = reader['glyf']
+		self.assertTrue(hasattr(reader, 'glyfTable'))
+		self.assertTrue(hasattr(glyfEntry, 'data'))
+		self.assertEqual(glyfData, glyfEntry.data)
+
+	def test_get_loca_before_glyf(self):
+		reader = WOFF2Reader(self.file)
+		locaEntry = reader.tables['loca']
+		glyfEntry = reader.tables['glyf']
+		self.assertFalse(hasattr(locaEntry, 'data'))
+		self.assertFalse(hasattr(glyfEntry, 'data'))
+		self.assertFalse(hasattr(reader, 'glyfTable'))
+		# to reconstruct loca, must reconstruct glyf first
+		reader['loca']
+		self.assertTrue(hasattr(locaEntry, 'data'))
+		self.assertTrue(hasattr(glyfEntry, 'data'))
+		self.assertTrue(hasattr(reader, 'glyfTable'))
+
+	def test_reconstruct_unknown(self):
+		with self.assertRaises(TTLibError):
+			self.reconstruct_table('head')
+
+	def test_transformed_loca_is_null(self):
+		reader = WOFF2Reader(self.file)
+		with self.assertRaises(TTLibError):
+			reader.reconstructTable('loca', b'\x00')
 
 
 class WOFF2DirectoryEntryTest(unittest.TestCase):
