@@ -121,9 +121,9 @@ class WOFF2DirectoryEntryTest(unittest.TestCase):
 			self.entry.fromString(b"")
 
 	def test_not_enough_data_table_unknown_tag(self):
-		incomplete_buf = bytearray([0x3F, 0, 0, 0])
+		incompleteBuf = bytearray([0x3F, 0, 0, 0])
 		with self.assertRaises(TTLibError):
-			self.entry.fromString(bytes(incomplete_buf))
+			self.entry.fromString(bytes(incompleteBuf))
 
 	def test_table_reserved_flags(self):
 		with self.assertRaises(TTLibError):
@@ -137,41 +137,41 @@ class WOFF2DirectoryEntryTest(unittest.TestCase):
 			self.entry.fromString(data)
 
 	def test_fromFile(self):
-		unknown_tag = b'ZZZZ'
-		data = bytechr(getKnownTagIndex(unknown_tag))
-		data += unknown_tag
+		unknownTag = b'ZZZZ'
+		data = bytechr(getKnownTagIndex(unknownTag))
+		data += unknownTag
 		data += packBase128(12345)
-		expected_pos = len(data)
+		expectedPos = len(data)
 		f = StringIO(data + b'\0'*100)
 		self.entry.fromFile(f)
-		self.assertEqual(f.tell(), expected_pos)
+		self.assertEqual(f.tell(), expectedPos)
 
 	def test_transformed_toString(self):
 		self.entry.tag = Tag('glyf')
 		self.entry.flags = getKnownTagIndex(self.entry.tag)
 		self.entry.origLength = 123456
 		self.entry.length = 12345
-		expected_size = (woff2FlagsSize + base128Size(self.entry.origLength) +
+		expectedSize = (woff2FlagsSize + base128Size(self.entry.origLength) +
 			base128Size(self.entry.length))
 		data = self.entry.toString()
-		self.assertEqual(len(data), expected_size)
+		self.assertEqual(len(data), expectedSize)
 
 	def test_known_toString(self):
 		self.entry.tag = Tag('head')
 		self.entry.flags = getKnownTagIndex(self.entry.tag)
 		self.entry.origLength = 54
-		expected_size = (woff2FlagsSize + base128Size(self.entry.origLength))
+		expectedSize = (woff2FlagsSize + base128Size(self.entry.origLength))
 		data = self.entry.toString()
-		self.assertEqual(len(data), expected_size)
+		self.assertEqual(len(data), expectedSize)
 
 	def test_unknown_toString(self):
 		self.entry.tag = Tag('ZZZZ')
 		self.entry.flags = woff2UnknownTagIndex
 		self.entry.origLength = 123456
-		expected_size = (woff2FlagsSize + woff2UnknownTagSize +
+		expectedSize = (woff2FlagsSize + woff2UnknownTagSize +
 			base128Size(self.entry.origLength))
 		data = self.entry.toString()
-		self.assertEqual(len(data), expected_size)
+		self.assertEqual(len(data), expectedSize)
 
 
 class DummyReader(object):
