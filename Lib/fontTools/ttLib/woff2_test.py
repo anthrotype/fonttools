@@ -4,7 +4,7 @@ from fontTools.ttLib import TTFont, TTLibError
 from .woff2 import (WOFF2Reader, woff2DirectorySize, woff2DirectoryFormat,
 	woff2FlagsSize, woff2UnknownTagSize, woff2Base128MaxSize, WOFF2DirectoryEntry,
 	getKnownTagIndex, packBase128, base128Size, woff2UnknownTagIndex,
-	WOFF2FlavorData)
+	WOFF2FlavorData, woff2TransformedTableTags)
 import unittest
 import sstruct
 import sys
@@ -22,8 +22,6 @@ dirName = os.path.abspath(os.path.dirname(os.path.realpath(__file__)))
 ttxName = os.path.join(dirName, 'test_data', 'TestTTF-Regular.ttx')
 otxName = os.path.join(dirName, 'test_data', 'TestOTF-Regular.otx')
 metaDataName = os.path.join(dirName, 'test_data', 'test_woff2_metadata.xml')
-ttf = TTFont(None, recalcBBoxes=False, recalcTimestamp=False)
-otf = TTFont(None, recalcBBoxes=False, recalcTimestamp=False)
 ttWoff2File = StringIO()
 cffWoff2File = StringIO()
 
@@ -34,10 +32,12 @@ def setUpModule():
 	assert os.path.exists(ttxName)
 	assert os.path.exists(otxName)
 	# import TT-flavoured test font and save it to woff2
+	ttf = TTFont(None, recalcBBoxes=False, recalcTimestamp=False)
 	ttf.importXML(ttxName, quiet=True)
 	ttf.flavor = "woff2"
 	ttf.save(ttWoff2File, reorderTables=False)
 	# import CFF-flavoured test font and save it to woff2
+	otf = TTFont(None, recalcBBoxes=False, recalcTimestamp=False)
 	otf.importXML(otxName, quiet=True)
 	otf.flavor = "woff2"
 	otf.save(cffWoff2File, reorderTables=False)
@@ -48,37 +48,12 @@ class BaseReaderTest(unittest.TestCase):
 	@classmethod
 	def setUpClass(cls):
 		# called once, before any tests
-		cls.file = StringIO(ttWoff2File.getvalue())
-		cls.font = ttf
+		cls.file = StringIO(cffWoff2File.getvalue())
+		cls.font = TTFont(cls.file, recalcBBoxes=False, recalcTimestamp=False)
 
 	def setUp(self):
 		# called multiple times, before every test method
 		self.file.seek(0)
-
-
-class WOFF2ReaderTTFTest(BaseReaderTest):
-	""" Tests specific to TT-flavored fonts. """
-
-	def test_num_tables(self):
-		tags = [t for t in self.font.keys() if t != "GlyphOrder"]
-		data = self.file.read(woff2DirectorySize)
-		header = sstruct.unpack(woff2DirectoryFormat, data)
-		self.assertEqual(header['numTables'], len(tags))
-
-	def test_table_tags(self):
-		tags = set([t for t in self.font.keys() if t != "GlyphOrder"])
-		reader = WOFF2Reader(self.file)
-		self.assertEqual(set(reader.keys()), tags)
-
-
-class WOFF2ReaderCFFTest(WOFF2ReaderTTFTest):
-	""" Tests specific to CFF-flavored fonts. """
-
-	@classmethod
-	def setUpClass(cls):
-		# called once, before any tests
-		cls.file = StringIO(cffWoff2File.getvalue())
-		cls.font = otf
 
 
 class WOFF2ReaderTest(BaseReaderTest):
@@ -108,6 +83,41 @@ class WOFF2ReaderTest(BaseReaderTest):
 		data = sstruct.pack(woff2DirectoryFormat, header)
 		with self.assertRaises(TTLibError):
 			WOFF2Reader(StringIO(data + self.file.read()))
+
+	def test_num_tables(self):
+		tags = [t for t in self.font.keys() if t != "GlyphOrder"]
+		data = self.file.read(woff2DirectorySize)
+		header = sstruct.unpack(woff2DirectoryFormat, data)
+		self.assertEqual(header['numTables'], len(tags))
+
+	def test_table_tags(self):
+		tags = set([t for t in self.font.keys() if t != "GlyphOrder"])
+		reader = WOFF2Reader(self.file)
+		self.assertEqual(set(reader.keys()), tags)
+
+	def test_get_normal_tables_data(self):
+		woff2Reader = WOFF2Reader(self.file)
+		for tag in self.font.reader.keys():
+			if tag in woff2TransformedTableTags:
+				# these need specific tests
+				continue
+			self.assertEqual(self.font.reader[tag], woff2Reader[tag])
+
+
+class WOFF2ReaderTTFTest(BaseReaderTest):
+	""" Tests specific to TT-flavored fonts. """
+
+	@classmethod
+	def setUpClass(cls):
+		# called once, before any tests
+		cls.file = StringIO(ttWoff2File.getvalue())
+		cls.font = TTFont(cls.file, recalcBBoxes=False, recalcTimestamp=False)
+
+	def test_get_reconstructed_glyf_data(self):
+		origGlyfData = self.font.reader['glyf']
+		reader = WOFF2Reader(self.file)
+		reconstructedGlyfData = reader['glyf']
+		self.assertEqual(origGlyfData, reconstructedGlyfData)
 
 
 class WOFF2DirectoryEntryTest(unittest.TestCase):
