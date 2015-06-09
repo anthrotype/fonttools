@@ -97,7 +97,8 @@ class WOFF2Reader(SFNTReader):
 			self.glyfTable = WOFF2GlyfTable()
 			data = self.glyfTable.reconstruct(rawData)
 		elif tag == 'loca':
-			assert len(rawData) == 0, "expected 0, received %d bytes" % len(rawData)
+			if len(rawData) != 0:
+				raise TTLibError("expected 0, received %d bytes" % len(rawData))
 			if not hasattr(self, 'glyfTable'):
 				# make sure glyf is loaded first
 				self['glyf']
