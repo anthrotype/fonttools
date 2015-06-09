@@ -97,6 +97,11 @@ class WOFF2ReaderTest(unittest.TestCase):
 				continue
 			self.assertEqual(self.font.reader[tag], woff2Reader[tag])
 
+	def test_reconstruct_unknown(self):
+		reader = WOFF2Reader(self.file)
+		with self.assertRaises(TTLibError):
+			reader.reconstructTable('ZZZZ', '')
+
 
 class WOFF2ReaderTTFTest(unittest.TestCase):
 	""" Tests specific to TT-flavored fonts. """
@@ -125,10 +130,6 @@ class WOFF2ReaderTTFTest(unittest.TestCase):
 		origData = self.font.reader['loca']
 		reconstructedData = self.reconstruct_table('loca')
 		self.assertEqual(origData, reconstructedData)
-
-	def test_reconstruct_unknown(self):
-		with self.assertRaises(TTLibError):
-			self.reconstruct_table('head')
 
 	def test_transformed_loca_is_null(self):
 		reader = WOFF2Reader(self.file)
