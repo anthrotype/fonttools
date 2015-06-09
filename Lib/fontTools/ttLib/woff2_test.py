@@ -43,21 +43,15 @@ def setUpModule():
 	otf.save(cffWoff2File, reorderTables=False)
 
 
-class BaseReaderTest(unittest.TestCase):
+class WOFF2ReaderTest(unittest.TestCase):
 
 	@classmethod
 	def setUpClass(cls):
-		# called once, before any tests
 		cls.file = StringIO(cffWoff2File.getvalue())
 		cls.font = TTFont(cls.file, recalcBBoxes=False, recalcTimestamp=False)
 
 	def setUp(self):
-		# called multiple times, before every test method
 		self.file.seek(0)
-
-
-class WOFF2ReaderTest(BaseReaderTest):
-	""" Generic tests not specific to TT- or CFF-flavored fonts. """
 
 	def test_bad_signature(self):
 		with self.assertRaises(TTLibError):
@@ -104,14 +98,16 @@ class WOFF2ReaderTest(BaseReaderTest):
 			self.assertEqual(self.font.reader[tag], woff2Reader[tag])
 
 
-class WOFF2ReaderTTFTest(BaseReaderTest):
+class WOFF2ReaderTTFTest(unittest.TestCase):
 	""" Tests specific to TT-flavored fonts. """
 
 	@classmethod
 	def setUpClass(cls):
-		# called once, before any tests
 		cls.file = StringIO(ttWoff2File.getvalue())
 		cls.font = TTFont(cls.file, recalcBBoxes=False, recalcTimestamp=False)
+
+	def setUp(self):
+		self.file.seek(0)
 
 	def test_get_reconstructed_glyf_data(self):
 		origGlyfData = self.font.reader['glyf']
