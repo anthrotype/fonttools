@@ -320,8 +320,7 @@ class WOFF2GlyfTableTest(unittest.TestCase):
 	def test_reconstruct_loca(self):
 		table = WOFF2GlyfTable()
 		table.reconstruct(self.transformedGlyfData)
-		reconstructedData = table.getLocaData()
-		self.assertEqual(self.origLocaData, reconstructedData)
+		self.assertEqual(self.origLocaData, table.getLocaData())
 
 
 if __name__ == "__main__":
