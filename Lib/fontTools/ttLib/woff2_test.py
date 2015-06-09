@@ -17,36 +17,36 @@ except ImportError:
 	pass
 
 
-dirName = os.path.abspath(os.path.dirname(os.path.realpath(__file__)))
-ttxName = os.path.join(dirName, 'test_data', 'TestTTF-Regular.ttx')
-otxName = os.path.join(dirName, 'test_data', 'TestOTF-Regular.otx')
-metaDataName = os.path.join(dirName, 'test_data', 'test_woff2_metadata.xml')
-ttWoff2File = StringIO()
-cffWoff2File = StringIO()
+DIR = os.path.abspath(os.path.dirname(os.path.realpath(__file__)))
+TTX = os.path.join(DIR, 'test_data', 'TestTTF-Regular.ttx')
+OTX = os.path.join(DIR, 'test_data', 'TestOTF-Regular.otx')
+METADATA = os.path.join(DIR, 'test_data', 'test_woff2_metadata.xml')
+TT_WOFF2 = StringIO()
+CFF_WOFF2 = StringIO()
 
 
 def setUpModule():
 	if not haveBrotli:
 		raise unittest.SkipTest("No module named brotli")
-	assert os.path.exists(ttxName)
-	assert os.path.exists(otxName)
+	assert os.path.exists(TTX)
+	assert os.path.exists(OTX)
 	# import TT-flavoured test font and save it to woff2
 	ttf = TTFont(None, recalcBBoxes=False, recalcTimestamp=False)
-	ttf.importXML(ttxName, quiet=True)
+	ttf.importXML(TTX, quiet=True)
 	ttf.flavor = "woff2"
-	ttf.save(ttWoff2File, reorderTables=False)
+	ttf.save(TT_WOFF2, reorderTables=False)
 	# import CFF-flavoured test font and save it to woff2
 	otf = TTFont(None, recalcBBoxes=False, recalcTimestamp=False)
-	otf.importXML(otxName, quiet=True)
+	otf.importXML(OTX, quiet=True)
 	otf.flavor = "woff2"
-	otf.save(cffWoff2File, reorderTables=False)
+	otf.save(CFF_WOFF2, reorderTables=False)
 
 
 class WOFF2ReaderTest(unittest.TestCase):
 
 	@classmethod
 	def setUpClass(cls):
-		cls.file = StringIO(cffWoff2File.getvalue())
+		cls.file = StringIO(CFF_WOFF2.getvalue())
 		cls.font = TTFont(cls.file, recalcBBoxes=False, recalcTimestamp=False)
 
 	def setUp(self):
@@ -107,7 +107,7 @@ class WOFF2ReaderTTFTest(unittest.TestCase):
 
 	@classmethod
 	def setUpClass(cls):
-		cls.file = StringIO(ttWoff2File.getvalue())
+		cls.file = StringIO(TT_WOFF2.getvalue())
 		cls.font = TTFont(cls.file, recalcBBoxes=False, recalcTimestamp=False)
 
 	def setUp(self):
@@ -214,8 +214,8 @@ class WOFF2FlavorDataTest(unittest.TestCase):
 	@classmethod
 	def setUpClass(cls):
 		""" called once, before any tests """
-		assert os.path.exists(metaDataName)
-		with open(metaDataName, 'rb') as f:
+		assert os.path.exists(METADATA)
+		with open(METADATA, 'rb') as f:
 			cls.xml_metadata = f.read()
 		cls.compressed_metadata = brotli.compress(cls.xml_metadata, mode=brotli.MODE_TEXT)
 		cls.fontdata = b'\0'*96  # 4-byte aligned
