@@ -18,56 +18,45 @@ except ImportError:
 	pass
 
 
-dirname = os.path.abspath(os.path.dirname(os.path.realpath(__file__)))
-ttxname = os.path.join(dirname, 'test_data', 'TestTTF-Regular.ttx')
-otxname = os.path.join(dirname, 'test_data', 'TestOTF-Regular.otx')
+dirName = os.path.abspath(os.path.dirname(os.path.realpath(__file__)))
+ttxName = os.path.join(dirName, 'test_data', 'TestTTF-Regular.ttx')
+otxName = os.path.join(dirName, 'test_data', 'TestOTF-Regular.otx')
+metaDataName = os.path.join(dirName, 'test_data', 'test_woff2_metadata.xml')
 ttf = TTFont(None, recalcBBoxes=False, recalcTimestamp=False)
 otf = TTFont(None, recalcBBoxes=False, recalcTimestamp=False)
-tt_woff2_file = StringIO()
-ot_woff2_file = StringIO()
+ttWoff2File = StringIO()
+cffWoff2File = StringIO()
 
 
 def setUpModule():
 	if not haveBrotli:
 		raise unittest.SkipTest("No module named brotli")
-	assert os.path.exists(ttxname)
-	assert os.path.exists(otxname)
+	assert os.path.exists(ttxName)
+	assert os.path.exists(otxName)
 	# import TT-flavoured test font and save it to woff2
-	ttf.importXML(ttxname, quiet=True)
+	ttf.importXML(ttxName, quiet=True)
 	ttf.flavor = "woff2"
-	ttf.save(tt_woff2_file, reorderTables=False)
+	ttf.save(ttWoff2File, reorderTables=False)
 	# import CFF-flavoured test font and save it to woff2
-	otf.importXML(otxname, quiet=True)
+	otf.importXML(otxName, quiet=True)
 	otf.flavor = "woff2"
-	otf.save(ot_woff2_file, reorderTables=False)
+	otf.save(cffWoff2File, reorderTables=False)
 
 
-class BasicTestCase(unittest.TestCase):
+class BaseReaderTest(unittest.TestCase):
+
+	@classmethod
+	def setUpClass(cls):
+		# called once, before any tests
+		cls.file = StringIO(ttWoff2File.getvalue())
+		cls.font = ttf
 
 	def setUp(self):
 		# called multiple times, before every test method
 		self.file.seek(0)
 
 
-class TT_TestCase(BasicTestCase):
-
-	@classmethod
-	def setUpClass(cls):
-		# called once, before any tests
-		cls.file = StringIO(tt_woff2_file.getvalue())
-		cls.font = ttf
-
-
-class CFF_TestCase(BasicTestCase):
-
-	@classmethod
-	def setUpClass(cls):
-		# called once, before any tests
-		cls.file = StringIO(ot_woff2_file.getvalue())
-		cls.font = otf
-
-
-class WOFF2ReaderTest_TTF(TT_TestCase):
+class WOFF2ReaderTTFTest(BaseReaderTest):
 	""" Tests specific to TT-flavored fonts. """
 
 	def test_num_tables(self):
@@ -82,12 +71,17 @@ class WOFF2ReaderTest_TTF(TT_TestCase):
 		self.assertEqual(set(reader.keys()), tags)
 
 
-class WOFF2ReaderTest_OTF(CFF_TestCase, WOFF2ReaderTest_TTF):
+class WOFF2ReaderCFFTest(WOFF2ReaderTTFTest):
 	""" Tests specific to CFF-flavored fonts. """
-	pass
+
+	@classmethod
+	def setUpClass(cls):
+		# called once, before any tests
+		cls.file = StringIO(cffWoff2File.getvalue())
+		cls.font = otf
 
 
-class WOFF2ReaderTest_Any(TT_TestCase):
+class WOFF2ReaderTest(BaseReaderTest):
 	""" Generic tests not specific to TT- or CFF-flavored fonts. """
 
 	def test_bad_signature(self):
@@ -194,9 +188,8 @@ class WOFF2FlavorDataTest(unittest.TestCase):
 	@classmethod
 	def setUpClass(cls):
 		""" called once, before any tests """
-		xml_filename = os.path.join(dirname, 'test_data', 'test_woff2_metadata.xml')
-		assert os.path.exists(xml_filename)
-		with open(xml_filename, 'rb') as f:
+		assert os.path.exists(metaDataName)
+		with open(metaDataName, 'rb') as f:
 			cls.xml_metadata = f.read()
 		cls.compressed_metadata = brotli.compress(cls.xml_metadata, mode=brotli.MODE_TEXT)
 		cls.fontdata = b'\0'*96  # 4-byte aligned
@@ -204,12 +197,12 @@ class WOFF2FlavorDataTest(unittest.TestCase):
 
 	def setUp(self):
 		""" called multiple times, before every test method """
-		self.infile = StringIO(self.fontdata)
-		self.infile.seek(0, 2)
+		self.file = StringIO(self.fontdata)
+		self.file.seek(0, 2)
 
 	def test_get_metaData_no_privData(self):
-		self.infile.write(self.compressed_metadata)
-		reader = DummyReader(self.infile)
+		self.file.write(self.compressed_metadata)
+		reader = DummyReader(self.file)
 		reader.metaOffset = len(self.fontdata)
 		reader.metaLength = len(self.compressed_metadata)
 		reader.metaOrigLength = len(self.xml_metadata)
@@ -217,16 +210,16 @@ class WOFF2FlavorDataTest(unittest.TestCase):
 		self.assertEqual(self.xml_metadata, flavorData.metaData)
 
 	def test_get_privData_no_metaData(self):
-		self.infile.write(self.privData)
-		reader = DummyReader(self.infile)
+		self.file.write(self.privData)
+		reader = DummyReader(self.file)
 		reader.privOffset = len(self.fontdata)
 		reader.privLength = len(self.privData)
 		flavorData = WOFF2FlavorData(reader)
 		self.assertEqual(self.privData, flavorData.privData)
 
 	def test_get_metaData_and_privData(self):
-		self.infile.write(self.compressed_metadata + self.privData)
-		reader = DummyReader(self.infile)
+		self.file.write(self.compressed_metadata + self.privData)
+		reader = DummyReader(self.file)
 		reader.metaOffset = len(self.fontdata)
 		reader.metaLength = len(self.compressed_metadata)
 		reader.metaOrigLength = len(self.xml_metadata)
@@ -237,7 +230,7 @@ class WOFF2FlavorDataTest(unittest.TestCase):
 		self.assertEqual(self.privData, flavorData.privData)
 
 	def test_get_major_minorVersion(self):
-		reader = DummyReader(self.infile)
+		reader = DummyReader(self.file)
 		reader.majorVersion = 1
 		reader.minorVersion = 1
 		flavorData = WOFF2FlavorData(reader)
