@@ -5,7 +5,10 @@ from .woff2 import (WOFF2Reader, woff2DirectorySize, woff2DirectoryFormat,
 	woff2FlagsSize, woff2UnknownTagSize, woff2Base128MaxSize, WOFF2DirectoryEntry,
 	getKnownTagIndex, packBase128, base128Size, woff2UnknownTagIndex,
 	WOFF2FlavorData, woff2TransformedTableTags, WOFF2GlyfTable)
-import unittest
+if sys.version_info < (2, 7):
+	import unittest2 as unittest
+else:
+	import unittest
 import sstruct
 import os
 
