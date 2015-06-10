@@ -533,6 +533,18 @@ class WOFF2GlyfTable(getTableClass('glyf')):
 		""" Convert transformed 'glyf' table data to SFNT 'glyf' table data.
 		Decompile the resulting 'loca' table data.
 		"""
+		self._init_decoder(transformedGlyfData)
+
+		self.glyphOrder = ["glyph%d" % i for i in range(self.numGlyphs)]
+		self.glyphs = {}
+		for glyphID, glyphName in enumerate(self.glyphOrder):
+			glyph = self._decodeGlyph(glyphID)
+			self.glyphs[glyphName] = glyph
+
+		glyfData = self.compile(self.ttFont)
+		return glyfData
+
+	def _init_decoder(self, transformedGlyfData):
 		data = transformedGlyfData
 		inputDataSize = len(data)
 
@@ -584,20 +596,6 @@ class WOFF2GlyfTable(getTableClass('glyf')):
 		if sys.byteorder != "big":
 			self.nContourStream.byteswap()
 		assert len(self.nContourStream) == numGlyphs
-
-		self.glyphOrder = glyphOrder = []
-		for glyphID in range(numGlyphs):
-			glyphName = "glyph%d" % glyphID
-			glyphOrder.append(glyphName)
-		self.ttFont.setGlyphOrder(glyphOrder)
-
-		self.glyphs = {}
-		for glyphID, glyphName in enumerate(glyphOrder):
-			glyph = self._decodeGlyph(glyphID)
-			self.glyphs[glyphName] = glyph
-
-		glyfData = self.compile(self.ttFont)
-		return glyfData
 
 	def _decodeGlyph(self, glyphID):
 		glyph = getTableModule('glyf').Glyph()
@@ -759,21 +757,7 @@ class WOFF2GlyfTable(getTableClass('glyf')):
 
 	def transform(self, glyfData):
 		""" Convert the SFNT 'glyf' table data to WOFF2 transformed 'glyf' data. """
-		glyphOrder = ["glyph%d" % i for i in range(self.numGlyphs)]
-		self.ttFont.setGlyphOrder(glyphOrder)
-		self.ttFont.lazy = False
-
-		self.decompile(glyfData, self.ttFont)
-
-		self.nContourStream = b""
-		self.nPointsStream = b""
-		self.flagStream = b""
-		self.glyphStream = b""
-		self.compositeStream = b""
-		self.bboxStream = b""
-		self.instructionStream = b""
-		bboxBitmapSize = ((self.numGlyphs + 31) >> 5) << 2
-		self.bboxBitmap = array.array('B', [0]*bboxBitmapSize)
+		self._init_encoder(glyfData)
 
 		for glyphID in range(self.numGlyphs):
 			self._encodeGlyph(glyphID)
@@ -790,11 +774,30 @@ class WOFF2GlyfTable(getTableClass('glyf')):
 		self.bboxStreamSize = len(self.bboxStream)
 		self.instructionStreamSize = len(self.instructionStream)
 
-		transfomedGlyfData = sstruct.pack(woff2GlyfTableFormat, self) + \
-			self.nContourStream + self.nPointsStream + self.flagStream + \
-			self.glyphStream + self.compositeStream + self.bboxStream + \
-			self.instructionStream
+		header = sstruct.pack(woff2GlyfTableFormat, self)
+
+		transfomedGlyfData = bytesjoin([
+			header, self.nContourStream, self.nPointsStream, self.flagStream,
+			self.glyphStream, self.compositeStream, self.bboxStream,
+			self.instructionStream])
 		return transfomedGlyfData
+
+	def _init_encoder(self, glyfData):
+		glyphOrder = ["glyph%d" % i for i in range(self.numGlyphs)]
+		self.ttFont.setGlyphOrder(glyphOrder)
+		self.ttFont.lazy = False
+
+		self.decompile(glyfData, self.ttFont)
+
+		self.nContourStream = b""
+		self.nPointsStream = b""
+		self.flagStream = b""
+		self.glyphStream = b""
+		self.compositeStream = b""
+		self.bboxStream = b""
+		self.instructionStream = b""
+		bboxBitmapSize = ((self.numGlyphs + 31) >> 5) << 2
+		self.bboxBitmap = array.array('B', [0]*bboxBitmapSize)
 
 	def _encodeGlyph(self, glyphID):
 		glyphName = self.getGlyphName(glyphID)
