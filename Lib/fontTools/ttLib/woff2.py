@@ -535,7 +535,6 @@ class WOFF2GlyfTable(getTableClass('glyf')):
 		"""
 		self._init_decoder(transformedGlyfData)
 
-		self.glyphOrder = ["glyph%d" % i for i in range(self.numGlyphs)]
 		self.glyphs = {}
 		for glyphID, glyphName in enumerate(self.glyphOrder):
 			glyph = self._decodeGlyph(glyphID)
@@ -551,7 +550,6 @@ class WOFF2GlyfTable(getTableClass('glyf')):
 		if inputDataSize < woff2GlyfTableFormatSize:
 			raise TTLibError("not enough 'glyf' data")
 		dummy, data = sstruct.unpack2(woff2GlyfTableFormat, data, self)
-		numGlyphs = self.numGlyphs
 		substreamOffset = woff2GlyfTableFormatSize
 
 		self.nContourStream = data[:self.nContourStreamSize]
@@ -596,6 +594,8 @@ class WOFF2GlyfTable(getTableClass('glyf')):
 		if sys.byteorder != "big":
 			self.nContourStream.byteswap()
 		assert len(self.nContourStream) == numGlyphs
+
+		self.glyphOrder = ["glyph%d" % i for i in range(self.numGlyphs)]
 
 	def _decodeGlyph(self, glyphID):
 		glyph = getTableModule('glyf').Glyph()
