@@ -585,7 +585,7 @@ class WOFF2GlyfTable(getTableClass('glyf')):
 				"incorrect size of transformed 'glyf' table: expected %d, received %d bytes"
 				% (substreamOffset, inputDataSize))
 
-		bboxBitmapSize = ((numGlyphs + 31) >> 5) << 2
+		bboxBitmapSize = ((self.numGlyphs + 31) >> 5) << 2
 		bboxBitmap = combinedBboxStream[:bboxBitmapSize]
 		self.bboxBitmap = array.array('B', bboxBitmap)
 		self.bboxStream = combinedBboxStream[bboxBitmapSize:]
@@ -593,7 +593,7 @@ class WOFF2GlyfTable(getTableClass('glyf')):
 		self.nContourStream = array.array("h", self.nContourStream)
 		if sys.byteorder != "big":
 			self.nContourStream.byteswap()
-		assert len(self.nContourStream) == numGlyphs
+		assert len(self.nContourStream) == self.numGlyphs
 
 		self.glyphOrder = ["glyph%d" % i for i in range(self.numGlyphs)]
 
