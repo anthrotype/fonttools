@@ -88,7 +88,8 @@ setup(
 					"ttx = fontTools.ttx:main",
 					"pyftsubset = fontTools.subset:main",
 					"pyftmerge = fontTools.merge:main",
-					"pyftinspect = fontTools.inspect:main"
+					"pyftinspect = fontTools.inspect:main",
+					"pyftconvert = fontTools.convert:main"
 				]
 			},
 		**classifiers
