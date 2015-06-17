@@ -94,15 +94,15 @@ class WOFF2Reader(SFNTReader):
 			raise TTLibError("Transform for table '%s' is unknown" % tag)
 		if tag == 'glyf':
 			# reconstruct both glyf and loca
-			self.glyfTable = WOFF2GlyfTable()
-			data = self.glyfTable.reconstruct(rawData)
+			self.decoder = WOFF2GlyfDecoder(rawData)
+			data = self.decoder.glyfData
 		elif tag == 'loca':
 			if len(rawData) != 0:
 				raise TTLibError("expected 0, received %d bytes" % len(rawData))
 			if not hasattr(self, 'glyfTable'):
 				# make sure glyf is loaded first
 				self['glyf']
-			data = self.glyfTable.getLocaData()
+			data = self.decoder.locaData
 		else:
 			raise NotImplementedError
 		return data
@@ -349,9 +349,10 @@ class WOFF2Writer(SFNTWriter):
 		elif tag == "glyf":
 			indexFormat = byteord(self.tables['head'].data[51])
 			numGlyphs, = struct.unpack(">H", self.tables['maxp'].data[4:6])
-			glyfTable = WOFF2GlyfTable()
-			glyfTable.setLocaData(self.tables['loca'].data, indexFormat, numGlyphs)
-			data = glyfTable.transform(data)
+			glyfData = data
+			locaData = self.tables['loca'].data
+			encoder = WOFF2GlyfEncoder(glyfData, locaData, indexFormat, numGlyphs)
+			data = encoder.glyfData
 		else:
 			raise NotImplementedError
 		return data
@@ -519,31 +520,17 @@ class WOFF2DirectoryEntry(DirectoryEntry):
 		return data
 
 
-class WOFF2GlyfTable(getTableClass('glyf')):
-	"""Decoder/encoder for WOFF2 'glyf' table transforms."""
 
-	def __init__(self):
-		self.tableTag = Tag('glyf')
+class WOFF2GlyfDecoder(object):
+	"""Decoder for WOFF2 'glyf' table transforms."""
+
+	def __init__(self, transformedGlyfData):
 		self.ttFont = TTFont(flavor="woff2", recalcBBoxes=False)
+		self.glyfTable = self.ttFont['glyf'] = getTableClass('glyf')()
+		self.locaTable = self.ttFont['loca'] = getTableClass('loca')()
 		self.ttFont['head'] = getTableClass('head')()
 		self.ttFont['maxp'] = getTableClass('maxp')()
-		self.ttFont['loca'] = getTableClass('loca')()
 
-	def reconstruct(self, transformedGlyfData):
-		""" Convert transformed 'glyf' table data to SFNT 'glyf' table data.
-		Decompile the resulting 'loca' table data.
-		"""
-		self._initDecoder(transformedGlyfData)
-
-		self.glyphs = {}
-		for glyphID, glyphName in enumerate(self.glyphOrder):
-			glyph = self._decodeGlyph(glyphID)
-			self.glyphs[glyphName] = glyph
-
-		glyfData = self.compile(self.ttFont)
-		return glyfData
-
-	def _initDecoder(self, transformedGlyfData):
 		data = transformedGlyfData
 		inputDataSize = len(data)
 
@@ -595,7 +582,31 @@ class WOFF2GlyfTable(getTableClass('glyf')):
 			self.nContourStream.byteswap()
 		assert len(self.nContourStream) == self.numGlyphs
 
-		self.glyphOrder = ["glyph%d" % i for i in range(self.numGlyphs)]
+		self.glyfTable.glyphOrder = ["glyph%d" % i for i in range(self.numGlyphs)]
+
+		glyphs = self.glyfTable.glyphs = {}
+		for glyphID, glyphName in enumerate(self.glyfTable.glyphOrder):
+			glyph = self._decodeGlyph(glyphID)
+			glyphs[glyphName] = glyph
+
+		self.glyfData = self.glyfTable.compile(self.ttFont)
+
+		assert hasattr(self.locaTable, 'locations') and hasattr(self, 'indexFormat')
+		locations = self.locaTable.locations
+		indexFormat = self.indexFormat
+		if indexFormat == 0:
+			if max(locations) >= 0x20000:
+				raise TTLibError("indexFormat is 0 but local offsets > 0x20000")
+			if not all(l % 2 == 0 for l in locations):
+				raise TTLibError("indexFormat is 0 but local offsets not multiples of 2")
+			offsetArray = array.array("H")
+			for i in range(len(locations)):
+				offsetArray.append(locations[i] // 2)
+		else:
+			offsetArray = array.array("I", locations)
+		if sys.byteorder != "big":
+			offsetArray.byteswap()
+		self.locaData = offsetArray.tostring()
 
 	def _decodeGlyph(self, glyphID):
 		glyph = getTableModule('glyf').Glyph()
@@ -616,7 +627,7 @@ class WOFF2GlyfTable(getTableClass('glyf')):
 		haveInstructions = 0
 		while more:
 			component = getTableModule('glyf').GlyphComponent()
-			more, haveInstr, data = component.decompile(data, self)
+			more, haveInstr, data = component.decompile(data, self.glyfTable)
 			haveInstructions = haveInstructions | haveInstr
 			glyph.components.append(component)
 		self.compositeStream = data
@@ -652,7 +663,7 @@ class WOFF2GlyfTable(getTableClass('glyf')):
 		if haveBBox:
 			dummy, self.bboxStream = sstruct.unpack2(bboxFormat, self.bboxStream, glyph)
 		else:
-			glyph.recalcBounds(self)
+			glyph.recalcBounds(self.glyfTable)
 
 	def _decodeTriplets(self, glyph):
 
@@ -724,40 +735,36 @@ class WOFF2GlyfTable(getTableClass('glyf')):
 		bytesConsumed = tripletIndex
 		self.glyphStream = self.glyphStream[bytesConsumed:]
 
-	def getLocaData(self):
-		""" Return compiled 'loca' table data (must be run after 'reconstruct'
-		method).
-		"""
-		locaTable = self.ttFont['loca']
-		assert hasattr(locaTable, 'locations') and hasattr(self, 'indexFormat'), \
-			"'getLocaData' must be run after 'reconstruct' method"
-		locations = locaTable.locations
-		indexFormat = self.indexFormat
-		if indexFormat == 0:
-			if max(locations) >= 0x20000:
-				raise TTLibError("indexFormat is 0 but local offsets > 0x20000")
-			if not all(l % 2 == 0 for l in locations):
-				raise TTLibError("indexFormat is 0 but local offsets not multiples of 2")
-			offsetArray = array.array("H")
-			for i in range(len(locations)):
-				offsetArray.append(locations[i] // 2)
-		else:
-			offsetArray = array.array("I", locations)
-		if sys.byteorder != "big":
-			offsetArray.byteswap()
-		return offsetArray.tostring()
 
-	def setLocaData(self, locaData, indexFormat, numGlyphs):
-		""" Decompile 'loca' table data using the specified 'indexFormat' and
-		'numGlyphs' (must be run before 'transform' method).
-		"""
+class WOFF2GlyfEncoder(object):
+	"""Encoder for WOFF2 'glyf' table transforms."""
+
+	def __init__(self, glyfData, locaData, indexFormat, numGlyphs):
+		self.ttFont = TTFont(flavor="woff2", recalcBBoxes=False)
+		self.glyfTable = self.ttFont['glyf'] = getTableClass('glyf')()
+		self.locaTable = self.ttFont['loca'] = getTableClass('loca')()
+		self.ttFont['head'] = getTableClass('head')()
+		self.ttFont['maxp'] = getTableClass('maxp')()
+		# Decompile 'loca' table data using the specified 'indexFormat' and 'numGlyphs'
 		self.indexFormat = self.ttFont['head'].indexToLocFormat = indexFormat
 		self.numGlyphs = self.ttFont['maxp'].numGlyphs = numGlyphs
 		self.ttFont['loca'].decompile(locaData, self.ttFont)
 
-	def transform(self, glyfData):
-		""" Convert the SFNT 'glyf' table data to WOFF2 transformed 'glyf' data. """
-		self._initEncoder(glyfData)
+		glyphOrder = ["glyph%d" % i for i in range(self.numGlyphs)]
+		self.ttFont.setGlyphOrder(glyphOrder)
+		self.ttFont.lazy = False
+
+		self.glyfTable.decompile(glyfData, self.ttFont)
+
+		self.nContourStream = b""
+		self.nPointsStream = b""
+		self.flagStream = b""
+		self.glyphStream = b""
+		self.compositeStream = b""
+		self.bboxStream = b""
+		self.instructionStream = b""
+		bboxBitmapSize = ((self.numGlyphs + 31) >> 5) << 2
+		self.bboxBitmap = array.array('B', [0]*bboxBitmapSize)
 
 		for glyphID in range(self.numGlyphs):
 			self._encodeGlyph(glyphID)
@@ -780,28 +787,11 @@ class WOFF2GlyfTable(getTableClass('glyf')):
 			header, self.nContourStream, self.nPointsStream, self.flagStream,
 			self.glyphStream, self.compositeStream, self.bboxStream,
 			self.instructionStream])
-		return transfomedGlyfData
-
-	def _initEncoder(self, glyfData):
-		glyphOrder = ["glyph%d" % i for i in range(self.numGlyphs)]
-		self.ttFont.setGlyphOrder(glyphOrder)
-		self.ttFont.lazy = False
-
-		self.decompile(glyfData, self.ttFont)
-
-		self.nContourStream = b""
-		self.nPointsStream = b""
-		self.flagStream = b""
-		self.glyphStream = b""
-		self.compositeStream = b""
-		self.bboxStream = b""
-		self.instructionStream = b""
-		bboxBitmapSize = ((self.numGlyphs + 31) >> 5) << 2
-		self.bboxBitmap = array.array('B', [0]*bboxBitmapSize)
+		self.glyfData = transfomedGlyfData
 
 	def _encodeGlyph(self, glyphID):
-		glyphName = self.getGlyphName(glyphID)
-		glyph = self.glyphs[glyphName]
+		glyphName = self.glyfTable.getGlyphName(glyphID)
+		glyph = self.glyfTable.glyphs[glyphName]
 		self.nContourStream += struct.pack(">h", glyph.numberOfContours)
 		if glyph.numberOfContours == 0:
 			return
@@ -820,7 +810,7 @@ class WOFF2GlyfTable(getTableClass('glyf')):
 				haveInstructions = hasattr(glyph, "program")
 				more = 0
 			component = glyph.components[i]
-			self.compositeStream += component.compile(more, haveInstructions, self)
+			self.compositeStream += component.compile(more, haveInstructions, self.glyfTable)
 		if haveInstructions:
 			self._encodeInstructions(glyph)
 
