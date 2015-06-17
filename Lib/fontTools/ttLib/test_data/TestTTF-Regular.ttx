@@ -394,6 +394,7 @@
         <pt x="100" y="50" on="1"/>
       </contour>
       <instructions><assembly>
+        SVTCA[0]  /* SetFPVectorToAxis */
         </assembly></instructions>
     </TTGlyph>
 
@@ -405,6 +406,9 @@
       <component glyphName="period" x="0" y="0" flags="0x4"/>
       <component glyphName="period" x="241" y="0" flags="0x4"/>
       <component glyphName="period" x="482" y="0" flags="0x4"/>
+      <instructions><assembly>
+        SVTCA[0]  /* SetFPVectorToAxis */
+        </assembly></instructions>
     </TTGlyph>
 
     <TTGlyph name="period" xMin="55" yMin="0" xMax="186" yMax="122">
@@ -415,6 +419,7 @@
         <pt x="55" y="0" on="1"/>
       </contour>
       <instructions><assembly>
+        SVTCA[0]  /* SetFPVectorToAxis */
         </assembly></instructions>
     </TTGlyph>
 
