@@ -4,7 +4,7 @@ from fontTools.ttLib import TTFont, TTLibError
 from .woff2 import (WOFF2Reader, woff2DirectorySize, woff2DirectoryFormat,
 	woff2FlagsSize, woff2UnknownTagSize, woff2Base128MaxSize, WOFF2DirectoryEntry,
 	getKnownTagIndex, packBase128, base128Size, woff2UnknownTagIndex,
-	WOFF2FlavorData, woff2TransformedTableTags, WOFF2GlyfTable)
+	WOFF2FlavorData, woff2TransformedTableTags, WOFF2GlyfDecoder, WOFF2GlyfEncoder)
 if sys.version_info < (2, 7):
 	import unittest2 as unittest
 else:
@@ -302,7 +302,7 @@ class WOFF2WriterTest(unittest.TestCase):
 		""" called multiple times, after every test method """
 
 
-class WOFF2GlyfTableTest(unittest.TestCase):
+class WOFF2GlyfDecoderTest(unittest.TestCase):
 
 	@classmethod
 	def setUpClass(cls):
@@ -316,26 +316,22 @@ class WOFF2GlyfTableTest(unittest.TestCase):
 		cls.transformedGlyfData = glyfEntry.loadData(reader.transformBuffer)
 
 	def test_reconstruct(self):
-		table = WOFF2GlyfTable()
-		reconstructedData = table.reconstruct(self.transformedGlyfData)
-		self.assertEqual(self.origGlyfData, reconstructedData)
+		decoder = WOFF2GlyfDecoder(self.transformedGlyfData)
+		self.assertEqual(self.origGlyfData, decoder.glyfData)
 
 	def test_getLocaData(self):
-		table = WOFF2GlyfTable()
-		table.reconstruct(self.transformedGlyfData)
-		self.assertEqual(self.origLocaData, table.getLocaData())
+		decoder = WOFF2GlyfDecoder(self.transformedGlyfData)
+		self.assertEqual(self.origLocaData, decoder.locaData)
 
 	def test_decode_glyf_header_not_enough_data(self):
-		table = WOFF2GlyfTable()
 		with self.assertRaises(TTLibError):
-			table.reconstruct("")
+			WOFF2GlyfDecoder("")
 
 	def test_decode_glyf_table_incorrect_size(self):
-		table = WOFF2GlyfTable()
 		with self.assertRaises(TTLibError):
-			table.reconstruct(self.transformedGlyfData + b"\x00")
+			WOFF2GlyfDecoder(self.transformedGlyfData + b"\x00")
 		with self.assertRaises(TTLibError):
-			table.reconstruct(self.transformedGlyfData[:-1])
+			WOFF2GlyfDecoder(self.transformedGlyfData[:-1])
 
 
 if __name__ == "__main__":
