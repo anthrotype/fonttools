@@ -533,7 +533,7 @@ class WOFF2GlyfTable(getTableClass('glyf')):
 		""" Convert transformed 'glyf' table data to SFNT 'glyf' table data.
 		Decompile the resulting 'loca' table data.
 		"""
-		self._init_decoder(transformedGlyfData)
+		self._initDecoder(transformedGlyfData)
 
 		self.glyphs = {}
 		for glyphID, glyphName in enumerate(self.glyphOrder):
@@ -543,7 +543,7 @@ class WOFF2GlyfTable(getTableClass('glyf')):
 		glyfData = self.compile(self.ttFont)
 		return glyfData
 
-	def _init_decoder(self, transformedGlyfData):
+	def _initDecoder(self, transformedGlyfData):
 		data = transformedGlyfData
 		inputDataSize = len(data)
 
@@ -757,7 +757,7 @@ class WOFF2GlyfTable(getTableClass('glyf')):
 
 	def transform(self, glyfData):
 		""" Convert the SFNT 'glyf' table data to WOFF2 transformed 'glyf' data. """
-		self._init_encoder(glyfData)
+		self._initEncoder(glyfData)
 
 		for glyphID in range(self.numGlyphs):
 			self._encodeGlyph(glyphID)
@@ -782,7 +782,7 @@ class WOFF2GlyfTable(getTableClass('glyf')):
 			self.instructionStream])
 		return transfomedGlyfData
 
-	def _init_encoder(self, glyfData):
+	def _initEncoder(self, glyfData):
 		glyphOrder = ["glyph%d" % i for i in range(self.numGlyphs)]
 		self.ttFont.setGlyphOrder(glyphOrder)
 		self.ttFont.lazy = False
