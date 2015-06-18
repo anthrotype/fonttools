@@ -4,11 +4,12 @@ from fontTools.ttLib import TTFont, TTLibError
 from .woff2 import (WOFF2Reader, woff2DirectorySize, woff2DirectoryFormat,
 	woff2FlagsSize, woff2UnknownTagSize, woff2Base128MaxSize, WOFF2DirectoryEntry,
 	getKnownTagIndex, packBase128, base128Size, woff2UnknownTagIndex,
-	WOFF2FlavorData, woff2TransformedTableTags, WOFF2GlyfTransformer, compileGlyf, compileLoca)
+	WOFF2FlavorData, woff2TransformedTableTags, WOFF2GlyfTable, WOFF2LocaTable)
 if sys.version_info < (2, 7):
 	import unittest2 as unittest
 else:
 	import unittest
+import struct
 import sstruct
 import os
 
@@ -302,7 +303,7 @@ class WOFF2WriterTest(unittest.TestCase):
 		""" called multiple times, after every test method """
 
 
-class WOFF2GlyfDecoderTest(unittest.TestCase):
+class WOFF2GlyfTableTest(unittest.TestCase):
 
 	@classmethod
 	def setUpClass(cls):
@@ -310,41 +311,56 @@ class WOFF2GlyfDecoderTest(unittest.TestCase):
 		cls.font.importXML(TTX, quiet=True)
 		cls.origGlyfData = cls.font.getTableData('glyf')
 		cls.origLocaData = cls.font.getTableData('loca')
+		cls.origIndexFormat = cls.font['head'].indexToLocFormat
 		infile = StringIO(TT_WOFF2.getvalue())
 		reader = WOFF2Reader(infile)
 		glyfEntry = reader.tables['glyf']
 		cls.transformedGlyfData = glyfEntry.loadData(reader.transformBuffer)
 
 	def test_reconstruct_transformed_glyf(self):
-		decoder = WOFF2GlyfTransformer()
-		glyfTable = decoder.reconstructGlyf(self.transformedGlyfData)
-		self.assertEqual(self.origGlyfData, compileGlyf(glyfTable))
+		glyfTable = WOFF2GlyfTable()
+		glyfTable.reconstruct(self.transformedGlyfData)
+		self.assertEqual(self.origGlyfData, glyfTable.compile())
 
 	def test_reconstruct_transformed_loca(self):
-		decoder = WOFF2GlyfTransformer()
-		glyfTable = decoder.reconstructGlyf(self.transformedGlyfData)
-		locations = []
-		compileGlyf(glyfTable, locations)
-		locaData = compileLoca(locations, indexFormat=decoder.indexFormat)
-		self.assertEqual(self.origLocaData, locaData)
+		glyfTable = WOFF2GlyfTable()
+		glyfTable.reconstruct(self.transformedGlyfData)
+		locaTable = WOFF2LocaTable()
+		locaTable.reconstruct(glyfTable)
+		self.assertEqual(self.origLocaData, locaTable.compile())
 
 	def test_decode_glyf_header_not_enough_data(self):
-		decoder = WOFF2GlyfTransformer()
 		with self.assertRaises(TTLibError):
-			decoder.reconstructGlyf("")
+			WOFF2GlyfTable().reconstruct("")
 
 	def test_decode_glyf_table_incorrect_size(self):
-		decoder = WOFF2GlyfTransformer()
 		with self.assertRaises(TTLibError):
-			decoder.reconstructGlyf(self.transformedGlyfData + b"\x00")
+			WOFF2GlyfTable().reconstruct(self.transformedGlyfData + b"\x00")
 		with self.assertRaises(TTLibError):
-			decoder.reconstructGlyf(self.transformedGlyfData[:-1])
+			WOFF2GlyfTable().reconstruct(self.transformedGlyfData[:-1])
 
-	def test_glyf_roundtripping(self):
-		decoder = WOFF2GlyfTransformer()
-		glyfTable = decoder.reconstructGlyf(self.transformedGlyfData)
-		encoder = WOFF2GlyfTransformer()
-		transformedGlyfData = encoder.transformGlyf(glyfTable, decoder.indexFormat)
+	def test_glyf_reconstruct_and_transform(self):
+		glyfTable = WOFF2GlyfTable()
+		glyfTable.reconstruct(self.transformedGlyfData)
+		transformedGlyfData = glyfTable.transform(glyfTable.indexFormat)
+		self.assertEqual(self.transformedGlyfData, transformedGlyfData)
+
+	def test_glyf_transform_and_reconstruct(self):
+		numGlyphs, = struct.unpack('>H', self.transformedGlyfData[4:6])
+		indexFormat = byteord(self.transformedGlyfData[7])
+		glyfTable = WOFF2GlyfTable()
+		glyfTable.decompile(self.origGlyfData, self.origLocaData, indexFormat, numGlyphs)
+		transformedGlyfData = glyfTable.transform(indexFormat)
+		newGlyfTable = WOFF2GlyfTable()
+		newGlyfTable.reconstruct(transformedGlyfData)
+		self.assertEqual(self.origGlyfData, newGlyfTable.compile())
+
+	def test_glyf_decompile_and_transform(self):
+		numGlyphs, = struct.unpack('>H', self.transformedGlyfData[4:6])
+		indexFormat = byteord(self.transformedGlyfData[7])
+		glyfTable = WOFF2GlyfTable()
+		glyfTable.decompile(self.origGlyfData, self.origLocaData, indexFormat, numGlyphs)
+		transformedGlyfData = glyfTable.transform(indexFormat)
 		self.assertEqual(self.transformedGlyfData, transformedGlyfData)
 
 
