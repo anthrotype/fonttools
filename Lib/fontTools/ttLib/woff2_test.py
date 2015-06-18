@@ -4,7 +4,7 @@ from fontTools.ttLib import TTFont, TTLibError
 from .woff2 import (WOFF2Reader, woff2DirectorySize, woff2DirectoryFormat,
 	woff2FlagsSize, woff2UnknownTagSize, woff2Base128MaxSize, WOFF2DirectoryEntry,
 	getKnownTagIndex, packBase128, base128Size, woff2UnknownTagIndex,
-	WOFF2FlavorData, woff2TransformedTableTags, WOFF2GlyfDecoder, WOFF2GlyfEncoder)
+	WOFF2FlavorData, woff2TransformedTableTags, WOFF2GlyfTransformer, compileGlyf, compileLoca)
 if sys.version_info < (2, 7):
 	import unittest2 as unittest
 else:
@@ -306,32 +306,46 @@ class WOFF2GlyfDecoderTest(unittest.TestCase):
 
 	@classmethod
 	def setUpClass(cls):
-		font = TTFont(None, recalcBBoxes=False, recalcTimestamp=False)
-		font.importXML(TTX, quiet=True)
-		cls.origGlyfData = font.getTableData('glyf')
-		cls.origLocaData = font.getTableData('loca')
+		cls.font = TTFont(None, recalcBBoxes=False, recalcTimestamp=False)
+		cls.font.importXML(TTX, quiet=True)
+		cls.origGlyfData = cls.font.getTableData('glyf')
+		cls.origLocaData = cls.font.getTableData('loca')
 		infile = StringIO(TT_WOFF2.getvalue())
 		reader = WOFF2Reader(infile)
 		glyfEntry = reader.tables['glyf']
 		cls.transformedGlyfData = glyfEntry.loadData(reader.transformBuffer)
 
-	def test_reconstruct(self):
-		decoder = WOFF2GlyfDecoder(self.transformedGlyfData)
-		self.assertEqual(self.origGlyfData, decoder.glyfData)
+	def test_reconstruct_transformed_glyf(self):
+		decoder = WOFF2GlyfTransformer()
+		glyfTable = decoder.reconstructGlyf(self.transformedGlyfData)
+		self.assertEqual(self.origGlyfData, compileGlyf(glyfTable))
 
-	def test_getLocaData(self):
-		decoder = WOFF2GlyfDecoder(self.transformedGlyfData)
-		self.assertEqual(self.origLocaData, decoder.locaData)
+	def test_reconstruct_transformed_loca(self):
+		decoder = WOFF2GlyfTransformer()
+		glyfTable = decoder.reconstructGlyf(self.transformedGlyfData)
+		locations = []
+		compileGlyf(glyfTable, locations)
+		locaData = compileLoca(locations, indexFormat=decoder.indexFormat)
+		self.assertEqual(self.origLocaData, locaData)
 
 	def test_decode_glyf_header_not_enough_data(self):
+		decoder = WOFF2GlyfTransformer()
 		with self.assertRaises(TTLibError):
-			WOFF2GlyfDecoder("")
+			decoder.reconstructGlyf("")
 
 	def test_decode_glyf_table_incorrect_size(self):
+		decoder = WOFF2GlyfTransformer()
 		with self.assertRaises(TTLibError):
-			WOFF2GlyfDecoder(self.transformedGlyfData + b"\x00")
+			decoder.reconstructGlyf(self.transformedGlyfData + b"\x00")
 		with self.assertRaises(TTLibError):
-			WOFF2GlyfDecoder(self.transformedGlyfData[:-1])
+			decoder.reconstructGlyf(self.transformedGlyfData[:-1])
+
+	def test_glyf_roundtripping(self):
+		decoder = WOFF2GlyfTransformer()
+		glyfTable = decoder.reconstructGlyf(self.transformedGlyfData)
+		encoder = WOFF2GlyfTransformer()
+		transformedGlyfData = encoder.transformGlyf(glyfTable, decoder.indexFormat)
+		self.assertEqual(self.transformedGlyfData, transformedGlyfData)
 
 
 if __name__ == "__main__":
