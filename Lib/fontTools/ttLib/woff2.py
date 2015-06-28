@@ -207,7 +207,7 @@ class WOFF2Writer(SFNTWriter):
 		# compress font data
 		self.transformBuffer.seek(0)
 		uncompressedData = self.transformBuffer.read()
-		compressedData = brotli.compress(uncompressedData, brotli.MODE_FONT)
+		compressedData = brotli.compress(uncompressedData, mode=brotli.MODE_FONT)
 		self.totalCompressedSize = len(compressedData)
 
 		# start calculating total size of WOFF2 font
@@ -228,7 +228,7 @@ class WOFF2Writer(SFNTWriter):
 		if flavorData.metaData:
 			self.metaOrigLength = len(flavorData.metaData)
 			self.metaOffset = offset
-			compressedMetaData = brotli.compress(flavorData.metaData, brotli.MODE_TEXT)
+			compressedMetaData = brotli.compress(flavorData.metaData, mode=brotli.MODE_TEXT)
 			self.metaLength = len(compressedMetaData)
 			offset += self.metaLength
 		else:
