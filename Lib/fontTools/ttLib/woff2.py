@@ -91,7 +91,7 @@ class WOFF2Reader(SFNTReader):
 	def reconstructTable(self, tag, rawData):
 		"""Reconstruct 'glyf' or 'loca' tables from transformed 'rawData'."""
 		if tag not in woff2TransformedTableTags:
-			raise TTLibError("Transform for table '%s' is unknown" % tag)
+			raise TTLibError("transform for table '%s' is unknown" % tag)
 		if tag == 'glyf':
 			self.glyfTable = WOFF2GlyfTable()
 			self.glyfTable.reconstruct(rawData)
@@ -228,7 +228,7 @@ class WOFF2Writer(SFNTWriter):
 		if flavorData.metaData:
 			self.metaOrigLength = len(flavorData.metaData)
 			self.metaOffset = offset
-			compressedMetaData = brotli.compress(flavorData.metaData)
+			compressedMetaData = brotli.compress(flavorData.metaData, brotli.MODE_TEXT)
 			self.metaLength = len(compressedMetaData)
 			offset += self.metaLength
 		else:
