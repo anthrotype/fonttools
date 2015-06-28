@@ -144,7 +144,7 @@ class WOFF2ReaderTTFTest(unittest.TestCase):
 
 	def test_transformed_loca_is_null(self):
 		reader = WOFF2Reader(self.file)
-		with self.assertRaises(TTLibError):
+		with self.assertRaisesRegexp(TTLibError, "expected 0"):
 			reader.reconstructTable('loca', b'\x00')
 
 	def test_head_transform_flag(self):
