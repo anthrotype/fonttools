@@ -12,6 +12,7 @@ else:
 import struct
 import sstruct
 import os
+import random
 
 haveBrotli = False
 try:
@@ -238,16 +239,14 @@ class WOFF2FlavorDataTest(unittest.TestCase):
 
 	@classmethod
 	def setUpClass(cls):
-		""" called once, before any tests """
 		assert os.path.exists(METADATA)
 		with open(METADATA, 'rb') as f:
 			cls.xml_metadata = f.read()
 		cls.compressed_metadata = brotli.compress(cls.xml_metadata, mode=brotli.MODE_TEXT)
 		cls.fontdata = b'\0'*96  # 4-byte aligned
-		cls.privData = bytes(bytearray([i for i in range(32, 127)]))
+		cls.privData = bytes(bytearray(random.sample(range(32, 127), 20)))
 
 	def setUp(self):
-		""" called multiple times, before every test method """
 		self.file = StringIO(self.fontdata)
 		self.file.seek(0, 2)
 
@@ -282,8 +281,7 @@ class WOFF2FlavorDataTest(unittest.TestCase):
 
 	def test_get_major_minorVersion(self):
 		reader = DummyReader(self.file)
-		reader.majorVersion = 1
-		reader.minorVersion = 1
+		reader.majorVersion = reader.minorVersion = 1
 		flavorData = WOFF2FlavorData(reader)
 		self.assertEqual(flavorData.majorVersion, 1)
 		self.assertEqual(flavorData.minorVersion, 1)
