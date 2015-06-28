@@ -58,15 +58,15 @@ class WOFF2ReaderTest(unittest.TestCase):
 		self.file.seek(0)
 
 	def test_bad_signature(self):
-		with self.assertRaises(TTLibError):
+		with self.assertRaisesRegexp(TTLibError, 'bad signature'):
 			WOFF2Reader(StringIO(b"wOFF"))
 
 	def test_not_enough_data_header(self):
 		incomplete_header = self.file.read(woff2DirectorySize - 1)
-		with self.assertRaises(TTLibError):
+		with self.assertRaisesRegexp(TTLibError, 'not enough data'):
 			WOFF2Reader(StringIO(incomplete_header))
 
-	def test_bad_total_compressed_size(self):
+	def test_incorrect_compressed_size(self):
 		data = self.file.read(woff2DirectorySize)
 		header = sstruct.unpack(woff2DirectoryFormat, data)
 		header['totalCompressedSize'] = 0
@@ -74,12 +74,19 @@ class WOFF2ReaderTest(unittest.TestCase):
 		with self.assertRaises(brotli.error):
 			WOFF2Reader(StringIO(data + self.file.read()))
 
-	def test_no_match_actual_length(self):
+	def test_incorrect_uncompressed_size(self):
+		decompress_backup = brotli.decompress
+		brotli.decompress = lambda data: b""
+		with self.assertRaisesRegexp(TTLibError, 'unexpected size for decompressed'):
+			WOFF2Reader(self.file)
+		brotli.decompress = decompress_backup
+
+	def test_incorrect_file_size(self):
 		data = self.file.read(woff2DirectorySize)
 		header = sstruct.unpack(woff2DirectoryFormat, data)
 		header['length'] -= 1
 		data = sstruct.pack(woff2DirectoryFormat, header)
-		with self.assertRaises(TTLibError):
+		with self.assertRaisesRegexp(TTLibError, "doesn't match .* file size"):
 			WOFF2Reader(StringIO(data + self.file.read()))
 
 	def test_num_tables(self):
@@ -95,15 +102,14 @@ class WOFF2ReaderTest(unittest.TestCase):
 
 	def test_get_normal_tables(self):
 		woff2Reader = WOFF2Reader(self.file)
-		for tag in [t for t in self.font.keys() if t not in
-				woff2TransformedTableTags + ('head', 'GlyphOrder')]:
-			# transformed tables need specific tests
+		skipTags = woff2TransformedTableTags + ('head', 'GlyphOrder')
+		for tag in [t for t in self.font.keys() if t not in skipTags]:
 			origData = self.font.getTableData(tag)
 			self.assertEqual(origData, woff2Reader[tag])
 
 	def test_reconstruct_unknown(self):
 		reader = WOFF2Reader(self.file)
-		with self.assertRaises(TTLibError):
+		with self.assertRaisesRegexp(TTLibError, 'transform .* is unknown'):
 			reader.reconstructTable('ZZZZ', '')
 
 
