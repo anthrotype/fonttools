@@ -168,29 +168,29 @@ class WOFF2DirectoryEntryTest(unittest.TestCase):
 		self.entry = WOFF2DirectoryEntry()
 
 	def test_not_enough_data_table_flags(self):
-		with self.assertRaises(TTLibError):
+		with self.assertRaisesRegexp(TTLibError, "can't read table 'flags'"):
 			self.entry.fromString(b"")
 
 	def test_not_enough_data_table_unknown_tag(self):
 		incompleteBuf = bytearray([0x3F, 0, 0, 0])
-		with self.assertRaises(TTLibError):
+		with self.assertRaisesRegexp(TTLibError, "can't read table 'tag'"):
 			self.entry.fromString(bytes(incompleteBuf))
 
 	def test_table_reserved_flags(self):
-		with self.assertRaises(TTLibError):
+		with self.assertRaisesRegexp(TTLibError, "bits 6-7 are reserved"):
 			self.entry.fromString(bytechr(0xC0))
 
 	def test_loca_zero_transformLength(self):
-		data = bytechr(getKnownTagIndex(b'loca'))
+		data = bytechr(getKnownTagIndex('loca'))
 		data += packBase128(127)
-		data += packBase128(1)
-		with self.assertRaises(TTLibError):
+		data += packBase128(1)  # non-zero transformLength
+		with self.assertRaisesRegexp(TTLibError, 'transformLength .* loca .* must be 0'):
 			self.entry.fromString(data)
 
 	def test_fromFile(self):
-		unknownTag = b'ZZZZ'
+		unknownTag = Tag('ZZZZ')
 		data = bytechr(getKnownTagIndex(unknownTag))
-		data += unknownTag
+		data += unknownTag.tobytes()
 		data += packBase128(12345)
 		expectedPos = len(data)
 		f = StringIO(data + b'\0'*100)
