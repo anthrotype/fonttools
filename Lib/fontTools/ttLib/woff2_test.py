@@ -337,12 +337,11 @@ class WOFF2GlyfTableTest(unittest.TestCase):
 		self.assertEqual(self.origGlyfData, data)
 
 	def test_reconstruct_transformed_loca(self):
+		locaTable = self.font['loca'] = WOFF2LocaTable()
 		glyfTable = self.font['glyf'] = WOFF2GlyfTable()
 		glyfTable.reconstruct(self.transformedGlyfData, self.font)
-		locaTable = WOFF2LocaTable()
-		locaTable.reconstruct(b"", self.font)
-		indexFormat = glyfTable.indexFormat
-		data = locaTable.compile(self.font, indexFormat=indexFormat)
+		glyfTable.compile(self.font, padding=4)
+		data = locaTable.compile(self.font, indexFormat=glyfTable.indexFormat)
 		self.assertEqual(self.origLocaData, data)
 
 	def test_decode_glyf_header_not_enough_data(self):
