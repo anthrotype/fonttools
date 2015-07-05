@@ -101,6 +101,7 @@ class WOFF2Reader(SFNTReader):
 		if tag == 'glyf':
 			glyfTable = self.ttFont['glyf'] = WOFF2GlyfTable()
 			glyfTable.reconstruct(rawData, self.ttFont)
+			self.ttFont['loca'] = WOFF2LocaTable()
 			data = glyfTable.compile(self.ttFont, padding=4)
 			self.seenGlyf = True
 		elif tag == 'loca':
@@ -109,8 +110,7 @@ class WOFF2Reader(SFNTReader):
 			if not self.seenGlyf:
 				# make sure glyf is loaded first
 				self['glyf']
-			locaTable = self.ttFont['loca'] = WOFF2LocaTable()
-			locaTable.reconstruct(rawData, self.ttFont)
+			locaTable = self.ttFont['loca']
 			indexFormat = self.ttFont['glyf'].indexFormat
 			data = locaTable.compile(self.ttFont, indexFormat=indexFormat)
 		else:
@@ -539,13 +539,6 @@ class WOFF2LocaTable(getTableClass('loca')):
 				locations.byteswap()
 			locaData = locations.tostring()
 		return locaData
-
-	def reconstruct(self, data, ttFont):
-		ttFont['glyf'].compile(ttFont, padding=4)
-		self.set(ttFont['loca'].locations)
-
-	def transform(self, ttFont):
-		return b""
 
 
 class WOFF2GlyfTable(getTableClass('glyf')):
