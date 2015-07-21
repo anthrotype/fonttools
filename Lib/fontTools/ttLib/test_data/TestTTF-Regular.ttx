@@ -395,6 +395,7 @@
       </contour>
       <instructions><assembly>
         SVTCA[0]  /* SetFPVectorToAxis */
+        SVTCA[1]  /* SetFPVectorToAxis */
         </assembly></instructions>
     </TTGlyph>
 
@@ -408,6 +409,7 @@
       <component glyphName="period" x="482" y="0" flags="0x4"/>
       <instructions><assembly>
         SVTCA[0]  /* SetFPVectorToAxis */
+        SVTCA[1]  /* SetFPVectorToAxis */
         </assembly></instructions>
     </TTGlyph>
 
@@ -420,6 +422,7 @@
       </contour>
       <instructions><assembly>
         SVTCA[0]  /* SetFPVectorToAxis */
+        SVTCA[1]  /* SetFPVectorToAxis */
         </assembly></instructions>
     </TTGlyph>
 
@@ -541,5 +544,10 @@
     <gaspRange rangeMaxPPEM="8" rangeGaspBehavior="10"/>
     <gaspRange rangeMaxPPEM="65535" rangeGaspBehavior="15"/>
   </gasp>
+
+  <DSIG>
+    <!-- note that the Digital Signature will be invalid after recompilation! -->
+    <tableHeader flag="0x0" numSigs="0" version="1"/>
+  </DSIG>
 
 </ttFont>
