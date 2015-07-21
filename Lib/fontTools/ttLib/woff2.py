@@ -20,6 +20,32 @@ except ImportError:
 	pass
 
 
+def newTTFont(headData=None, maxpData=None, locaData=None, glyfData=None):
+	""" Return new TTFont instance. Optionally populate it with table data
+	to be used in WOFF2 normalisation and transform processes.
+	"""
+	ttFont = TTFont(recalcBBoxes=False, recalcTimestamp=False, lazy=False)
+	ttFont['head'] = getTableClass('head')()
+	ttFont['maxp'] = getTableClass('maxp')()
+
+	if headData:
+		ttFont['head'].decompile(headData, ttFont)
+	if maxpData:
+		ttFont['maxp'].decompile(maxpData, ttFont)
+		glyphOrder = ["glyph%d" % i for i in range(ttFont['maxp'].numGlyphs)]
+		ttFont.setGlyphOrder(glyphOrder)
+	if locaData:
+		assert headData and maxpData
+		ttFont['loca'] = WOFF2LocaTable()
+		ttFont['loca'].decompile(locaData, ttFont)
+	if glyfData:
+		assert locaData
+		ttFont['glyf'] = WOFF2GlyfTable()
+		ttFont['glyf'].decompile(glyfData, ttFont)
+
+	return ttFont
+
+
 class WOFF2Reader(SFNTReader):
 
 	flavor = "woff2"
@@ -70,11 +96,9 @@ class WOFF2Reader(SFNTReader):
 
 		self.flavorData = WOFF2FlavorData(self)
 
-		# make an empty TTFont instance to store tables required for transforms
-		self.ttFont = TTFont(recalcBBoxes=False, recalcTimestamp=False, lazy=False)
-		self.ttFont['head'] = getTableClass('head')()
-		self.ttFont['maxp'] = getTableClass('maxp')()
-		self.seenGlyf = False
+		# make empty TTFont to store data when reconstructing tables
+		self.ttFont = newTTFont()
+		self.done = []
 
 	def __getitem__(self, tag):
 		"""Fetch the raw table data. Reconstruct transformed tables."""
@@ -83,7 +107,7 @@ class WOFF2Reader(SFNTReader):
 		rawData = entry.loadData(self.transformBuffer)
 		if tag not in woff2TransformedTableTags:
 			return rawData
-		if hasattr(entry, 'data'):
+		if tag in self.done:
 			# already reconstructed
 			return entry.data
 		data = self.reconstructTable(tag, rawData)
@@ -92,27 +116,27 @@ class WOFF2Reader(SFNTReader):
 				"reconstructed 'loca' table doesn't match original size: expected %d, found %d"
 				% (entry.origLength, len(data)))
 		entry.data = data
+		self.done.append(tag)
 		return entry.data
 
 	def reconstructTable(self, tag, rawData):
-		"""Reconstruct 'glyf' or 'loca' tables from transformed 'rawData'."""
+		"""Reconstruct table named 'tag' from transformed 'rawData'."""
 		if tag not in woff2TransformedTableTags:
 			raise TTLibError("transform for table '%s' is unknown" % tag)
 		if tag == 'glyf':
+			self.ttFont['loca'] = WOFF2LocaTable()
 			glyfTable = self.ttFont['glyf'] = WOFF2GlyfTable()
 			glyfTable.reconstruct(rawData, self.ttFont)
-			self.ttFont['loca'] = WOFF2LocaTable()
+			# compile reconstructed glyf table and set loca's locations
 			data = glyfTable.compile(self.ttFont, padding=4)
-			self.seenGlyf = True
 		elif tag == 'loca':
 			if len(rawData) != 0:
 				raise TTLibError("expected 0, received %d bytes" % len(rawData))
-			if not self.seenGlyf:
+			if 'glyf' not in self.done:
 				# make sure glyf is loaded first
 				self['glyf']
 			locaTable = self.ttFont['loca']
-			indexFormat = self.ttFont['glyf'].indexFormat
-			data = locaTable.compile(self.ttFont, indexFormat=indexFormat)
+			data = locaTable.compile(self.ttFont)
 		else:
 			raise NotImplementedError
 		return data
@@ -146,17 +170,14 @@ class WOFF2Writer(SFNTWriter):
 		self.tables = {}
 		self.tableOrder = []
 
-		# make an empty TTFont instance to store tables required for transforms
-		self.ttFont = TTFont(recalcBBoxes=False, recalcTimestamp=False, lazy=False)
-		self.ttFont['head'] = getTableClass('head')()
-		self.ttFont['maxp'] = getTableClass('maxp')()
-		self.ttFont['loca'] = WOFF2LocaTable()
-		self.ttFont['glyf'] = WOFF2GlyfTable()
-
 	def __setitem__(self, tag, data):
 		"""Associate new entry named 'tag' with raw table data."""
 		if tag in self.tables:
 			raise TTLibError("cannot rewrite '%s' table" % tag)
+		if tag == 'DSIG':
+			# always drop DSIG table, since the encoding process can invalidate it
+			self.numTables -= 1
+			return
 
 		entry = self.DirectoryEntry()
 		entry.tag = Tag(tag)
@@ -174,22 +195,24 @@ class WOFF2Writer(SFNTWriter):
 		if len(self.tables) != self.numTables:
 			raise TTLibError("wrong number of tables; expected %d, found %d" % (self.numTables, len(self.tables)))
 
-		if 'head' not in self.tables:
-			raise TTLibError("no 'head' table: can't encode WOFF2 font")
-		# decompile tables required for woff2 normalization and transforms
-		self.ttFont['head'].decompile(self.tables['head'].data, self.ttFont)
 		if {'glyf', 'loca'}.issubset(self.tables):
-			# only applies to TTF
-			self.ttFont['maxp'].decompile(self.tables['maxp'].data, self.ttFont)
-			self.ttFont['loca'].decompile(self.tables['loca'].data, self.ttFont)
-			# make dummy glyphOrder before decompiling glyf table
-			numGlyphs = self.ttFont['maxp'].numGlyphs
-			glyphOrder = ["glyph%d" % i for i in range(numGlyphs)]
-			self.ttFont.setGlyphOrder(glyphOrder)
-			self.ttFont['glyf'].decompile(self.tables['glyf'].data, self.ttFont)
-
-		# drop DSIG, set head's flag 11, and 4-byte align glyph offsets
-		self.normaliseFont()
+			# normalise glyf and loca tables by padding offsets to multiple of 4 bytes
+			ttFont = self.ttFont = newTTFont(
+				headData=self.tables['head'].data,
+				maxpData=self.tables['maxp'].data,
+				locaData=self.tables['loca'].data,
+				glyfData=self.tables['glyf'].data)
+			# set loca's locations while re-compiling glyf data
+			self.tables['glyf'].data = ttFont['glyf'].compile(ttFont, padding=4)
+			# set head.indexToLocFormat while re-compiling loca data
+			self.tables['loca'].data = ttFont['loca'].compile(ttFont)
+		else:
+			# CFF-flavored
+			ttFont = self.ttFont = newTTFont(headData=self.tables['head'].data)
+		# set bit 11 of head 'flags' to indicate that the font has undergone a
+		# 'lossless modifying transform'
+		ttFont['head'].flags |= (1 << 11)
+		self.tables['head'].data = ttFont['head'].compile(ttFont)
 
 		# to pass the legacy OpenType Sanitiser currently included in browsers,
 		# we must sort the table directory and data alphabetically by tag.
@@ -223,9 +246,10 @@ class WOFF2Writer(SFNTWriter):
 
 		# write tables to transformBuffer
 		for tag, entry in tables:
-			data = entry.data
 			if tag in woff2TransformedTableTags:
-				data = self.transformTable(tag, data)
+				data = self.transformTable(tag)
+			else:
+				data = entry.data
 			entry.offset = self.nextTableOffset
 			entry.saveData(self.transformBuffer, data)
 			self.nextTableOffset += entry.length
@@ -298,49 +322,14 @@ class WOFF2Writer(SFNTWriter):
 			assert self.file.tell() == self.privOffset
 			self.file.write(privData)
 
-	def normaliseFont(self):
-		""" The WOFF 2.0 conversion is guaranteed to be lossless in a bitwise sense
-		only for 'normalised' font files. Normalisation occurs before any transforms,
-		and involves:
-		- removing the DSIG table, since the encoding process can invalidate it;
-		- setting bit 11 of head 'flags' field to indicate that the font has
-		  undergone a 'lossless modifying transform'.
-		For TrueType-flavoured OpenType fonts, normalisation also involves padding
-		glyph offsets to multiple of 4 bytes.
-		"""
-		tables = self.tables
-		if 'DSIG' in tables:
-			del tables['DSIG']
-			self.tableOrder.pop(self.tableOrder.index('DSIG'))
-			self.numTables -= 1
-
-		# set bit 11 of head 'flags'
-		self.ttFont['head'].flags |= (1 << 11)
-		tables['head'].data = self.ttFont['head'].compile(self.ttFont)
-
-		if not all(['glyf' in tables, 'loca' in tables]):
-			return  # CFF font, skip
-
-		# compile glyf data with 4-byte padding
-		tables['glyf'].data = self.ttFont['glyf'].compile(self.ttFont, padding=4)
-
-		# compile loca data with new locations
-		locaTable = self.ttFont['loca']
-		oldIndexFormat = self.ttFont['head'].indexToLocFormat
-		tables['loca'].data = locaTable.compile(self.ttFont)
-		if self.ttFont['head'].indexToLocFormat != oldIndexFormat:
-			# recompile head if 'indexToLocFormat' changed
-			tables['head'].data = self.ttFont['head'].compile(self.ttFont)
-
-	def transformTable(self, tag, data):
-		"""Transform 'glyf' or 'loca' table data."""
+	def transformTable(self, tag):
+		"""Return transformed table data."""
 		if tag not in woff2TransformedTableTags:
 			raise TTLibError("Transform for table '%s' is unknown" % tag)
 		if tag == "loca":
 			data = b""
 		elif tag == "glyf":
 			glyfTable = self.ttFont['glyf']
-			glyfTable.decompile(data, self.ttFont)
 			data = glyfTable.transform(self.ttFont)
 		else:
 			raise NotImplementedError
@@ -510,21 +499,22 @@ class WOFF2DirectoryEntry(DirectoryEntry):
 
 
 class WOFF2LocaTable(getTableClass('loca')):
+	"""Same as parent class. The only difference is that it attempts to preserve
+	the 'indexFormat' as encoded in WOFF2 glyf table.
+	"""
 
 	def __init__(self):
 		self.tableTag = Tag('loca')
 
-	def compile(self, ttFont, indexFormat=None):
+	def compile(self, ttFont):
 		try:
 			max_location = max(self.locations)
 		except AttributeError:
 			self.set([])
 			max_location = 0
-		if indexFormat is None:
-			# use the most compact indexFormat
-			locaData = super(WOFF2LocaTable, self).compile(ttFont)
-		else:
-			# copile loca using the specified indexFormat
+		if 'glyf' in ttFont and hasattr(ttFont['glyf'], 'indexFormat'):
+			# copile loca using the indexFormat speficied in the WOFF2 glyf table
+			indexFormat = ttFont['glyf'].indexFormat
 			if indexFormat == 0:
 				if max_location >= 0x20000:
 					raise TTLibError("indexFormat is 0 but local offsets > 0x20000")
@@ -537,45 +527,63 @@ class WOFF2LocaTable(getTableClass('loca')):
 				locations = array.array("I", self.locations)
 			if sys.byteorder != "big":
 				locations.byteswap()
-			locaData = locations.tostring()
-		return locaData
+			data = locations.tostring()
+		else:
+			# use the most compact indexFormat given the current glyph offsets
+			data = super(WOFF2LocaTable, self).compile(ttFont)
+		return data
 
 
 class WOFF2GlyfTable(getTableClass('glyf')):
-	"""Decoder/Encoder for WOFF2 'glyf' and 'loca' table transforms."""
+	"""Decoder/Encoder for WOFF2 'glyf' table transform."""
 
 	def __init__(self):
 		self.tableTag = Tag('glyf')
 
-	def compile(self, ttFont, padding=4):
-		if ttFont is None:
-			assert hasattr(self, 'glyphOrder')
-			recalcBBoxes = False
-		else:
+	def compile(self, ttFont, padding=None):
+		""" Adds a 'padding' keyword argument to optionally pad glyph offsets
+		to multiple of specified byte size (e.g. padding=4). Otherwise, same
+		as parent class' method.
+		"""
+		if not hasattr(self, "glyphOrder"):
 			self.glyphOrder = ttFont.getGlyphOrder()
-			recalcBBoxes = ttFont.recalcBBoxes
 		locations = []
 		currentLocation = 0
 		dataList = []
+		recalcBBoxes = ttFont.recalcBBoxes
 		for glyphName in self.glyphOrder:
 			glyph = self.glyphs[glyphName]
-			glyphData = glyph.compile(self, recalcBBoxes=recalcBBoxes)
-			if padding in (2, 4):
-				# pad glyph locations to multiples of 2 or 4 bytes
+			glyphData = glyph.compile(self, recalcBBoxes)
+			if padding:
 				glyphData = padData(glyphData, size=padding)
 			locations.append(currentLocation)
 			currentLocation = currentLocation + len(glyphData)
 			dataList.append(glyphData)
 		locations.append(currentLocation)
+
+		if not padding and currentLocation < 0x20000:
+			# See if we can pad any odd-lengthed glyphs to allow loca
+			# table to use the short offsets.
+			indices = [i for i, data in enumerate(dataList) if len(data) % 2 == 1]
+			if indices and currentLocation + len(indices) < 0x20000:
+				# It fits.  Do it.
+				for i in indices:
+					dataList[i] += b'\0'
+				currentLocation = 0
+				for i, glyphData in enumerate(dataList):
+					locations[i] = currentLocation
+					currentLocation += len(glyphData)
+				locations[len(dataList)] = currentLocation
+
 		data = bytesjoin(dataList)
-		if ttFont:
-			if 'loca' in ttFont:
-				ttFont['loca'].set(locations)
-			if 'maxp' in ttFont:
-				ttFont['maxp'].numGlyphs = len(self.glyphs)
+		if 'loca' in ttFont:
+			ttFont['loca'].set(locations)
+		if 'maxp' in ttFont:
+			ttFont['maxp'].numGlyphs = len(self.glyphs)
 		return data
 
 	def reconstruct(self, data, ttFont):
+		""" Decompile transformed 'glyf' data."""
 		inputDataSize = len(data)
 
 		if inputDataSize < woff2GlyfTableFormatSize:
@@ -626,13 +634,21 @@ class WOFF2GlyfTable(getTableClass('glyf')):
 			self.nContourStream.byteswap()
 		assert len(self.nContourStream) == self.numGlyphs
 
-		self.glyphOrder = ["glyph%d" % i for i in range(self.numGlyphs)]
-		if ttFont:
+		try:
+			self.glyphOrder = ttFont.getGlyphOrder()
+		except:
+			self.glyphOrder = None
+		if 'head' in ttFont:
+			ttFont['head'].indexToLocFormat = self.indexFormat
+		if 'maxp' in ttFont:
+			ttFont['maxp'].numGlyphs = self.numGlyphs
+		if self.glyphOrder is None:
+			self.glyphOrder = ["glyph%d" % i for i in range(self.numGlyphs)]
 			ttFont.setGlyphOrder(self.glyphOrder)
-			if 'head' in ttFont:
-				ttFont['head'].indexToLocFormat = self.indexFormat
-			if 'maxp' in ttFont:
-				ttFont['maxp'].numGlyphs = self.numGlyphs
+		else:
+			if len(self.glyphOrder) != self.numGlyphs:
+				raise TTLibError("incorrect glyphOrder: expected %d glyphs, found %d" %
+					(len(self.glyphOrder), self.numGlyphs))
 
 		glyphs = self.glyphs = {}
 		for glyphID, glyphName in enumerate(self.glyphOrder):
@@ -1089,16 +1105,19 @@ def padData(data, size=4):
 
 	>>> len(padData(b'abcd'))
 	4
+	>>> len(padData(b'abcde', size=2))
+	6
 	>>> len(padData(b'abcde'))
 	8
 	>>> padData(b'abcdef') == b'abcdef\x00\x00'
 	True
 	"""
 	length = len(data)
-	s = size - 1
-	paddedLength = (length + s) & ~s
-	paddedData = tobytes(data) + b"\0" * (paddedLength - length)
-	return paddedData
+	if size < 2 or length % size == 0:
+		paddingLength = 0
+	else:
+		paddingLength = size - (length % size)
+	return tobytes(data) + b"\0" * paddingLength
 
 
 if __name__ == "__main__":
