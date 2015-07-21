@@ -4,7 +4,7 @@ from fontTools.ttLib import TTFont, TTLibError, getTableClass
 from .woff2 import (WOFF2Reader, woff2DirectorySize, woff2DirectoryFormat,
 	woff2FlagsSize, woff2UnknownTagSize, woff2Base128MaxSize, WOFF2DirectoryEntry,
 	getKnownTagIndex, packBase128, base128Size, woff2UnknownTagIndex,
-	WOFF2FlavorData, woff2TransformedTableTags, WOFF2GlyfTable, WOFF2LocaTable)
+	WOFF2FlavorData, woff2TransformedTableTags, WOFF2GlyfTable, WOFF2LocaTable, newTTFont)
 if sys.version_info < (2, 7):
 	import unittest2 as unittest
 else:
@@ -37,12 +37,12 @@ def setUpModule():
 		raise unittest.SkipTest("No module named brotli")
 	assert os.path.exists(TTX)
 	assert os.path.exists(OTX)
-	# import TT-flavoured test font and save it to woff2
+	# import TT-flavoured test font and save it as WOFF2
 	ttf = TTFont(recalcBBoxes=False, recalcTimestamp=False)
 	ttf.importXML(TTX, quiet=True)
 	ttf.flavor = "woff2"
 	ttf.save(TT_WOFF2, reorderTables=False)
-	# import CFF-flavoured test font and save it to woff2
+	# import CFF-flavoured test font and save it as WOFF2
 	otf = TTFont(recalcBBoxes=False, recalcTimestamp=False)
 	otf.importXML(OTX, quiet=True)
 	otf.flavor = "woff2"
@@ -93,19 +93,19 @@ class WOFF2ReaderTest(unittest.TestCase):
 			WOFF2Reader(StringIO(data + self.file.read()))
 
 	def test_num_tables(self):
-		tags = [t for t in self.font.keys() if t != "GlyphOrder"]
+		tags = [t for t in self.font.keys() if t not in ('GlyphOrder', 'DSIG')]
 		data = self.file.read(woff2DirectorySize)
 		header = sstruct.unpack(woff2DirectoryFormat, data)
 		self.assertEqual(header['numTables'], len(tags))
 
 	def test_table_tags(self):
-		tags = set([t for t in self.font.keys() if t != "GlyphOrder"])
+		tags = set([t for t in self.font.keys() if t not in ('GlyphOrder', 'DSIG')])
 		reader = WOFF2Reader(self.file)
 		self.assertEqual(set(reader.keys()), tags)
 
 	def test_get_normal_tables(self):
 		woff2Reader = WOFF2Reader(self.file)
-		skipTags = woff2TransformedTableTags + ('head', 'GlyphOrder')
+		skipTags = woff2TransformedTableTags + ('head', 'GlyphOrder', 'DSIG')
 		for tag in [t for t in self.font.keys() if t not in skipTags]:
 			origData = self.font.getTableData(tag)
 			decompressedData = woff2Reader[tag]
@@ -126,6 +126,28 @@ class WOFF2ReaderTest(unittest.TestCase):
 		self.assertEqual(origFlags, restoredFlags)
 
 
+def get_normalised_data(font, tag, padding=4):
+	assert tag in ('glyf', 'loca', 'head')
+	assert {'glyf', 'loca', 'head'}.issubset(font.keys())
+	glyfData = font.getTableData('glyf')
+	origIndexFormat = font['head'].indexToLocFormat
+	origLocations = font['loca'].locations[:]
+	glyfTable = WOFF2GlyfTable()
+	glyfTable.decompile(glyfData, font)
+	if tag == 'glyf':
+		data = glyfTable.compile(font, padding=padding)
+	elif tag == 'loca':
+		glyfTable.compile(font, padding=padding)
+		data = font['loca'].compile(font)
+	elif tag == 'head':
+		glyfTable.compile(font, padding=padding)
+		font['loca'].compile(font)
+		data = font['head'].compile(font)
+	font['loca'].set(origLocations)
+	font['head'].indexToLocFormat = origIndexFormat
+	return data
+
+
 class WOFF2ReaderTTFTest(unittest.TestCase):
 	""" Tests specific to TT-flavored fonts. """
 
@@ -140,15 +162,15 @@ class WOFF2ReaderTTFTest(unittest.TestCase):
 
 	def test_reconstruct_glyf(self):
 		woff2Reader = WOFF2Reader(self.file)
-		origData = self.font.getTableData('glyf')
 		reconstructedData = woff2Reader['glyf']
-		self.assertEqual(origData, reconstructedData)
+		normGlyfData = get_normalised_data(self.font, 'glyf')
+		self.assertEqual(normGlyfData, reconstructedData)
 
 	def test_reconstruct_loca(self):
 		woff2Reader = WOFF2Reader(self.file)
-		origData = self.font.getTableData('loca')
 		reconstructedData = woff2Reader['loca']
-		self.assertEqual(origData, reconstructedData)
+		normLocaData = get_normalised_data(self.font, 'loca')
+		self.assertEqual(normLocaData, reconstructedData)
 
 	def test_transformed_loca_is_null(self):
 		reader = WOFF2Reader(self.file)
@@ -305,44 +327,75 @@ class WOFF2GlyfTableTest(unittest.TestCase):
 
 	@classmethod
 	def setUpClass(cls):
-		font = TTFont(recalcBBoxes=False, recalcTimestamp=False, lazy=False)
+		font = TTFont(recalcBBoxes=False, recalcTimestamp=False)
 		font.importXML(TTX, quiet=True)
 		cls.origGlyfData = font.getTableData('glyf')
 		cls.origLocaData = font.getTableData('loca')
-		cls.origNumGlyphs = font['maxp'].numGlyphs
-		cls.glyphOrder = font.getGlyphOrder()
-		cls.origIndexFormat = font['head'].indexToLocFormat
+		cls.origHeadData = font.getTableData('head')
+		cls.origMaxpData = font.getTableData('maxp')
 		infile = StringIO(TT_WOFF2.getvalue())
 		reader = WOFF2Reader(infile)
 		glyfEntry = reader.tables['glyf']
 		cls.transformedGlyfData = glyfEntry.loadData(reader.transformBuffer)
 
 	def setUp(self):
-		self.font = TTFont(recalcBBoxes=False, recalcTimestamp=False, lazy=False)
-		self.font['head'] = getTableClass('head')()
-		self.font['head'].indexToLocFormat = self.origIndexFormat
-		self.font['maxp'] = getTableClass('maxp')()
-		self.font['maxp'].numGlyphs = self.origNumGlyphs
-		self.font['loca'] = WOFF2LocaTable()
-		self.font['loca'].decompile(self.origLocaData, self.font)
-		self.font.setGlyphOrder(self.glyphOrder)
+		self.font = newTTFont(
+			self.origHeadData,
+			self.origMaxpData,
+			self.origLocaData,
+			self.origGlyfData)
 
-	def tearDown(self):
-		del self.font
+	def test_reconstruct_glyf_padded(self):
+		glyfTable = WOFF2GlyfTable()
+		glyfTable.reconstruct(self.transformedGlyfData, self.font)
+		data = glyfTable.compile(self.font, padding=4)
+		normGlyfData = get_normalised_data(self.font, 'glyf')
+		self.assertEqual(normGlyfData, data)
 
-	def test_reconstruct_transformed_glyf(self):
+	def test_reconstruct_glyf_unpadded(self):
 		glyfTable = WOFF2GlyfTable()
 		glyfTable.reconstruct(self.transformedGlyfData, self.font)
 		data = glyfTable.compile(self.font)
 		self.assertEqual(self.origGlyfData, data)
 
-	def test_reconstruct_transformed_loca(self):
+	def test_reconstruct_glyf_incorrect_glyph_order(self):
+		glyfTable = WOFF2GlyfTable()
+		badGlyphOrder = self.font.getGlyphOrder()[:-1]
+		self.font.setGlyphOrder(badGlyphOrder)
+		with self.assertRaisesRegexp(TTLibError, "incorrect glyphOrder"):
+			glyfTable.reconstruct(self.transformedGlyfData, self.font)
+
+	def test_reconstruct_glyf_no_glyphOrder(self):
+		glyfTable = WOFF2GlyfTable()
+		if hasattr(self.font, 'glyphOrder'):
+			del self.font.glyphOrder
+		numGlyphs = self.font['maxp'].numGlyphs
+		del self.font['maxp']
+		glyfTable.reconstruct(self.transformedGlyfData, self.font)
+		expected = ["glyph%d" % i for i in range(numGlyphs)]
+		self.assertEqual(expected, glyfTable.glyphOrder)
+
+	def test_reconstruct_loca_padded(self):
 		locaTable = self.font['loca'] = WOFF2LocaTable()
 		glyfTable = self.font['glyf'] = WOFF2GlyfTable()
 		glyfTable.reconstruct(self.transformedGlyfData, self.font)
 		glyfTable.compile(self.font, padding=4)
-		data = locaTable.compile(self.font, indexFormat=glyfTable.indexFormat)
+		data = locaTable.compile(self.font)
+		normLocaData = get_normalised_data(self.font, 'loca')
+		self.assertEqual(normLocaData, data)
+
+	def test_reconstruct_loca_unpadded(self):
+		locaTable = self.font['loca'] = WOFF2LocaTable()
+		glyfTable = self.font['glyf'] = WOFF2GlyfTable()
+		glyfTable.reconstruct(self.transformedGlyfData, self.font)
+		glyfTable.compile(self.font)
+		data = locaTable.compile(self.font)
 		self.assertEqual(self.origLocaData, data)
+
+	def test_transform_glyf(self):
+		glyfTable = self.font['glyf']
+		data = glyfTable.transform(self.font)
+		self.assertEqual(self.transformedGlyfData, data)
 
 	def test_decode_glyf_header_not_enough_data(self):
 		with self.assertRaisesRegexp(TTLibError, "not enough 'glyf' data"):
@@ -355,26 +408,20 @@ class WOFF2GlyfTableTest(unittest.TestCase):
 		with self.assertRaisesRegexp(TTLibError, msg):
 			WOFF2GlyfTable().reconstruct(self.transformedGlyfData[:-1], self.font)
 
-	def test_glyf_reconstruct_and_transform(self):
+	def test_reconstruct_and_transform_glyf(self):
 		glyfTable = WOFF2GlyfTable()
 		glyfTable.reconstruct(self.transformedGlyfData, self.font)
 		data = glyfTable.transform(self.font)
 		self.assertEqual(self.transformedGlyfData, data)
 
-	def test_glyf_transform_and_reconstruct(self):
-		glyfTable = WOFF2GlyfTable()
-		glyfTable.decompile(self.origGlyfData, self.font)
+	def test_transform_and_reconstruct_glyf(self):
+		glyfTable = self.font['glyf']
 		transformedData = glyfTable.transform(self.font)
 		newGlyfTable = WOFF2GlyfTable()
 		newGlyfTable.reconstruct(transformedData, self.font)
-		reconstructedData = newGlyfTable.compile(self.font)
-		self.assertEqual(self.origGlyfData, reconstructedData)
-
-	def test_glyf_decompile_and_transform(self):
-		glyfTable = WOFF2GlyfTable()
-		glyfTable.decompile(self.origGlyfData, self.font)
-		data = glyfTable.transform(self.font)
-		self.assertEqual(self.transformedGlyfData, data)
+		reconstructedData = newGlyfTable.compile(self.font, padding=4)
+		normGlyfData = get_normalised_data(self.font, 'glyf')
+		self.assertEqual(normGlyfData, reconstructedData)
 
 
 if __name__ == "__main__":
