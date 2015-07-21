@@ -511,4 +511,9 @@
     <mtx name="space" width="250" lsb="0"/>
   </hmtx>
 
+  <DSIG>
+    <!-- note that the Digital Signature will be invalid after recompilation! -->
+    <tableHeader flag="0x0" numSigs="0" version="1"/>
+  </DSIG>
+
 </ttFont>
