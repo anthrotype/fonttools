@@ -1,6 +1,6 @@
 from __future__ import print_function, division, absolute_import, unicode_literals
 from fontTools.misc.py23 import *
-from fontTools.ttLib import TTFont, TTLibError, getTableClass
+from fontTools.ttLib import TTFont, TTLibError
 from .woff2 import (WOFF2Reader, woff2DirectorySize, woff2DirectoryFormat,
 	woff2FlagsSize, woff2UnknownTagSize, woff2Base128MaxSize, WOFF2DirectoryEntry,
 	getKnownTagIndex, packBase128, base128Size, woff2UnknownTagIndex,
@@ -9,7 +9,6 @@ if sys.version_info < (2, 7):
 	import unittest2 as unittest
 else:
 	import unittest
-import struct
 import sstruct
 import os
 import random
