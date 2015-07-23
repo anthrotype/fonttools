@@ -196,15 +196,15 @@ class WOFF2Writer(SFNTWriter):
 			raise TTLibError("wrong number of tables; expected %d, found %d" % (self.numTables, len(self.tables)))
 
 		if {'glyf', 'loca'}.issubset(self.tables):
-			# normalise glyf and loca tables by padding offsets to multiple of 4 bytes
+			# TT-flavored
 			ttFont = self.ttFont = newTTFont(
 				headData=self.tables['head'].data,
 				maxpData=self.tables['maxp'].data,
 				locaData=self.tables['loca'].data,
 				glyfData=self.tables['glyf'].data)
-			# set loca's locations while re-compiling glyf data
+			# pad glyph offsets to multiple of 4 bytes
 			self.tables['glyf'].data = ttFont['glyf'].compile(ttFont, padding=4)
-			# set head.indexToLocFormat while re-compiling loca data
+			# set head table's indexToLocFormat while re-compiling loca data
 			self.tables['loca'].data = ttFont['loca'].compile(ttFont)
 		else:
 			# CFF-flavored
