@@ -1,6 +1,6 @@
 from __future__ import print_function, division, absolute_import, unicode_literals
 from fontTools.misc.py23 import *
-from fontTools.ttLib import TTFont, TTLibError
+from fontTools import ttLib
 from .woff2 import (WOFF2Reader, woff2DirectorySize, woff2DirectoryFormat,
 	woff2FlagsSize, woff2UnknownTagSize, woff2Base128MaxSize, WOFF2DirectoryEntry,
 	getKnownTagIndex, packBase128, base128Size, woff2UnknownTagIndex,
@@ -34,12 +34,12 @@ def setUpModule():
 	assert os.path.exists(TTX)
 	assert os.path.exists(OTX)
 	# import TT-flavoured test font and save it as WOFF2
-	ttf = TTFont(recalcBBoxes=False, recalcTimestamp=False)
+	ttf = ttLib.TTFont(recalcBBoxes=False, recalcTimestamp=False)
 	ttf.importXML(TTX, quiet=True)
 	ttf.flavor = "woff2"
 	ttf.save(TT_WOFF2, reorderTables=False)
 	# import CFF-flavoured test font and save it as WOFF2
-	otf = TTFont(recalcBBoxes=False, recalcTimestamp=False)
+	otf = ttLib.TTFont(recalcBBoxes=False, recalcTimestamp=False)
 	otf.importXML(OTX, quiet=True)
 	otf.flavor = "woff2"
 	otf.save(CFF_WOFF2, reorderTables=False)
@@ -50,19 +50,19 @@ class WOFF2ReaderTest(unittest.TestCase):
 	@classmethod
 	def setUpClass(cls):
 		cls.file = StringIO(CFF_WOFF2.getvalue())
-		cls.font = TTFont(recalcBBoxes=False, recalcTimestamp=False)
+		cls.font = ttLib.TTFont(recalcBBoxes=False, recalcTimestamp=False)
 		cls.font.importXML(OTX, quiet=True)
 
 	def setUp(self):
 		self.file.seek(0)
 
 	def test_bad_signature(self):
-		with self.assertRaisesRegexp(TTLibError, 'bad signature'):
+		with self.assertRaisesRegexp(ttLib.TTLibError, 'bad signature'):
 			WOFF2Reader(StringIO(b"wOFF"))
 
 	def test_not_enough_data_header(self):
 		incomplete_header = self.file.read(woff2DirectorySize - 1)
-		with self.assertRaisesRegexp(TTLibError, 'not enough data'):
+		with self.assertRaisesRegexp(ttLib.TTLibError, 'not enough data'):
 			WOFF2Reader(StringIO(incomplete_header))
 
 	def test_incorrect_compressed_size(self):
@@ -76,7 +76,7 @@ class WOFF2ReaderTest(unittest.TestCase):
 	def test_incorrect_uncompressed_size(self):
 		decompress_backup = brotli.decompress
 		brotli.decompress = lambda data: b""  # return empty byte string
-		with self.assertRaisesRegexp(TTLibError, 'unexpected size for decompressed'):
+		with self.assertRaisesRegexp(ttLib.TTLibError, 'unexpected size for decompressed'):
 			WOFF2Reader(self.file)
 		brotli.decompress = decompress_backup
 
@@ -85,7 +85,7 @@ class WOFF2ReaderTest(unittest.TestCase):
 		header = sstruct.unpack(woff2DirectoryFormat, data)
 		header['length'] -= 1
 		data = sstruct.pack(woff2DirectoryFormat, header)
-		with self.assertRaisesRegexp(TTLibError, "doesn't match .* file size"):
+		with self.assertRaisesRegexp(ttLib.TTLibError, "doesn't match .* file size"):
 			WOFF2Reader(StringIO(data + self.file.read()))
 
 	def test_num_tables(self):
@@ -109,7 +109,7 @@ class WOFF2ReaderTest(unittest.TestCase):
 
 	def test_reconstruct_unknown(self):
 		reader = WOFF2Reader(self.file)
-		with self.assertRaisesRegexp(TTLibError, 'transform .* unknown'):
+		with self.assertRaisesRegexp(ttLib.TTLibError, 'transform .* unknown'):
 			reader.reconstructTable('ZZZZ', '')
 
 	def test_head_transform_flag(self):
@@ -150,7 +150,7 @@ class WOFF2ReaderTTFTest(unittest.TestCase):
 	@classmethod
 	def setUpClass(cls):
 		cls.file = StringIO(TT_WOFF2.getvalue())
-		cls.font = TTFont(recalcBBoxes=False, recalcTimestamp=False)
+		cls.font = ttLib.TTFont(recalcBBoxes=False, recalcTimestamp=False)
 		cls.font.importXML(TTX, quiet=True)
 
 	def setUp(self):
@@ -170,7 +170,7 @@ class WOFF2ReaderTTFTest(unittest.TestCase):
 
 	def test_transformed_loca_is_null(self):
 		reader = WOFF2Reader(self.file)
-		with self.assertRaisesRegexp(TTLibError, "expected 0"):
+		with self.assertRaisesRegexp(ttLib.TTLibError, "expected 0"):
 			reader.reconstructTable('loca', b'\x00')
 
 
@@ -181,23 +181,24 @@ class WOFF2DirectoryEntryTest(unittest.TestCase):
 		self.entry = WOFF2DirectoryEntry()
 
 	def test_not_enough_data_table_flags(self):
-		with self.assertRaisesRegexp(TTLibError, "can't read table 'flags'"):
+		with self.assertRaisesRegexp(ttLib.TTLibError, "can't read table 'flags'"):
 			self.entry.fromString(b"")
 
 	def test_not_enough_data_table_unknown_tag(self):
 		incompleteData = bytearray([0x3F, 0, 0, 0])
-		with self.assertRaisesRegexp(TTLibError, "can't read table 'tag'"):
+		with self.assertRaisesRegexp(ttLib.TTLibError, "can't read table 'tag'"):
 			self.entry.fromString(bytes(incompleteData))
 
 	def test_table_reserved_flags(self):
-		with self.assertRaisesRegexp(TTLibError, "bits 6-7 are reserved"):
+		with self.assertRaisesRegexp(ttLib.TTLibError, "bits 6-7 are reserved"):
 			self.entry.fromString(bytechr(0xC0))
 
 	def test_loca_zero_transformLength(self):
 		data = bytechr(getKnownTagIndex('loca'))  # flags
 		data += packBase128(random.randint(1, 100))  # origLength
 		data += packBase128(1)  # non-zero transformLength
-		with self.assertRaisesRegexp(TTLibError, 'transformLength .* loca .* must be 0'):
+		with self.assertRaisesRegexp(
+				ttLib.TTLibError, 'transformLength .* loca .* must be 0'):
 			self.entry.fromString(data)
 
 	def test_fromFile(self):
@@ -323,7 +324,7 @@ class WOFF2GlyfTableTest(unittest.TestCase):
 
 	@classmethod
 	def setUpClass(cls):
-		font = TTFont(recalcBBoxes=False, recalcTimestamp=False)
+		font = ttLib.TTFont(recalcBBoxes=False, recalcTimestamp=False)
 		font.importXML(TTX, quiet=True)
 		cls.origGlyfData = font.getTableData('glyf')
 		cls.origLocaData = font.getTableData('loca')
@@ -358,7 +359,7 @@ class WOFF2GlyfTableTest(unittest.TestCase):
 		glyfTable = WOFF2GlyfTable()
 		badGlyphOrder = self.font.getGlyphOrder()[:-1]
 		self.font.setGlyphOrder(badGlyphOrder)
-		with self.assertRaisesRegexp(TTLibError, "incorrect glyphOrder"):
+		with self.assertRaisesRegexp(ttLib.TTLibError, "incorrect glyphOrder"):
 			glyfTable.reconstruct(self.transformedGlyfData, self.font)
 
 	def test_reconstruct_glyf_no_glyphOrder(self):
@@ -394,14 +395,14 @@ class WOFF2GlyfTableTest(unittest.TestCase):
 		self.assertEqual(self.transformedGlyfData, data)
 
 	def test_decode_glyf_header_not_enough_data(self):
-		with self.assertRaisesRegexp(TTLibError, "not enough 'glyf' data"):
+		with self.assertRaisesRegexp(ttLib.TTLibError, "not enough 'glyf' data"):
 			WOFF2GlyfTable().reconstruct(b"", self.font)
 
 	def test_decode_glyf_table_incorrect_size(self):
 		msg = "incorrect size of transformed 'glyf'"
-		with self.assertRaisesRegexp(TTLibError, msg):
+		with self.assertRaisesRegexp(ttLib.TTLibError, msg):
 			WOFF2GlyfTable().reconstruct(self.transformedGlyfData + b"\x00", self.font)
-		with self.assertRaisesRegexp(TTLibError, msg):
+		with self.assertRaisesRegexp(ttLib.TTLibError, msg):
 			WOFF2GlyfTable().reconstruct(self.transformedGlyfData[:-1], self.font)
 
 	def test_reconstruct_and_transform_glyf(self):
