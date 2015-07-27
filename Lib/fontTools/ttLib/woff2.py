@@ -102,27 +102,26 @@ class WOFF2Reader(SFNTReader):
 
 	def __getitem__(self, tag):
 		"""Fetch the raw table data. Reconstruct transformed tables."""
-		tag = Tag(tag)
-		entry = self.tables[tag]
-		rawData = entry.loadData(self.transformBuffer)
 		if tag not in woff2TransformedTableTags:
-			return rawData
+			return self.getTableData(tag)
+		entry = self.tables[Tag(tag)]
 		if tag in self.done:
 			# already reconstructed
 			return entry.data
-		data = self.reconstructTable(tag, rawData)
-		if tag == 'loca' and len(data) != entry.origLength:
-			raise TTLibError(
-				"reconstructed 'loca' table doesn't match original size: expected %d, found %d"
-				% (entry.origLength, len(data)))
+		data = self.reconstructTable(tag)
 		entry.data = data
 		self.done.append(tag)
 		return entry.data
 
-	def reconstructTable(self, tag, rawData):
-		"""Reconstruct table named 'tag' from transformed 'rawData'."""
+	def getTableData(self, tag):
+		entry = self.tables[Tag(tag)]
+		return entry.loadData(self.transformBuffer)
+
+	def reconstructTable(self, tag):
+		"""Reconstruct table named 'tag' from transformed data."""
 		if tag not in woff2TransformedTableTags:
 			raise TTLibError("transform for table '%s' is unknown" % tag)
+		rawData = self.getTableData(tag)
 		if tag == 'glyf':
 			self.ttFont['loca'] = WOFF2LocaTable()
 			glyfTable = self.ttFont['glyf'] = WOFF2GlyfTable()
@@ -137,6 +136,12 @@ class WOFF2Reader(SFNTReader):
 				self['glyf']
 			locaTable = self.ttFont['loca']
 			data = locaTable.compile(self.ttFont)
+			entry = self.tables[Tag('loca')]
+			if tag == 'loca' and len(data) != entry.origLength:
+				raise TTLibError(
+					"reconstructed 'loca' table doesn't match original size: "
+					"expected %d, found %d"
+					% (entry.origLength, len(data)))
 		else:
 			raise NotImplementedError
 		return data
