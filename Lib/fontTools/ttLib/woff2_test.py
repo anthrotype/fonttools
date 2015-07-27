@@ -4,7 +4,8 @@ from fontTools import ttLib
 from .woff2 import (WOFF2Reader, woff2DirectorySize, woff2DirectoryFormat,
 	woff2FlagsSize, woff2UnknownTagSize, woff2Base128MaxSize, WOFF2DirectoryEntry,
 	getKnownTagIndex, packBase128, base128Size, woff2UnknownTagIndex,
-	WOFF2FlavorData, woff2TransformedTableTags, WOFF2GlyfTable, WOFF2LocaTable, newTTFont)
+	WOFF2FlavorData, woff2TransformedTableTags, WOFF2GlyfTable, WOFF2LocaTable,
+	newTTFont)
 import unittest
 import sstruct
 import os
@@ -18,11 +19,11 @@ except ImportError:
 	pass
 
 
-CURRENT_DIR = os.path.abspath(os.path.dirname(os.path.realpath(__file__)))
-DATA_DIR = os.path.join(CURRENT_DIR, 'test_data')
-TTX = os.path.join(DATA_DIR, 'TestTTF-Regular.ttx')
-OTX = os.path.join(DATA_DIR, 'TestOTF-Regular.otx')
-METADATA = os.path.join(DATA_DIR, 'test_woff2_metadata.xml')
+current_dir = os.path.abspath(os.path.dirname(os.path.realpath(__file__)))
+data_dir = os.path.join(current_dir, 'test_data')
+TTX = os.path.join(data_dir, 'TestTTF-Regular.ttx')
+OTX = os.path.join(data_dir, 'TestOTF-Regular.otx')
+METADATA = os.path.join(data_dir, 'test_woff2_metadata.xml')
 
 TT_WOFF2 = StringIO()
 CFF_WOFF2 = StringIO()
@@ -85,7 +86,8 @@ class WOFF2ReaderTest(unittest.TestCase):
 		header = sstruct.unpack(woff2DirectoryFormat, data)
 		header['length'] -= 1
 		data = sstruct.pack(woff2DirectoryFormat, header)
-		with self.assertRaisesRegexp(ttLib.TTLibError, "doesn't match .* file size"):
+		with self.assertRaisesRegexp(
+				ttLib.TTLibError, "doesn't match the actual file size"):
 			WOFF2Reader(StringIO(data + self.file.read()))
 
 	def test_num_tables(self):
@@ -101,16 +103,16 @@ class WOFF2ReaderTest(unittest.TestCase):
 
 	def test_get_normal_tables(self):
 		woff2Reader = WOFF2Reader(self.file)
-		skipTags = woff2TransformedTableTags + ('head', 'GlyphOrder', 'DSIG')
-		for tag in [t for t in self.font.keys() if t not in skipTags]:
+		specialTags = woff2TransformedTableTags + ('head', 'GlyphOrder', 'DSIG')
+		for tag in [t for t in self.font.keys() if t not in specialTags]:
 			origData = self.font.getTableData(tag)
 			decompressedData = woff2Reader[tag]
 			self.assertEqual(origData, decompressedData)
 
 	def test_reconstruct_unknown(self):
 		reader = WOFF2Reader(self.file)
-		with self.assertRaisesRegexp(ttLib.TTLibError, 'transform .* unknown'):
-			reader.reconstructTable('ZZZZ', '')
+		with self.assertRaisesRegexp(ttLib.TTLibError, 'transform for table .* unknown'):
+			reader.reconstructTable('ZZZZ')
 
 	def test_head_transform_flag(self):
 		headData = self.font.getTableData('head')
@@ -170,8 +172,16 @@ class WOFF2ReaderTTFTest(unittest.TestCase):
 
 	def test_transformed_loca_is_null(self):
 		reader = WOFF2Reader(self.file)
+		reader.tables['loca'].length = 1
 		with self.assertRaisesRegexp(ttLib.TTLibError, "expected 0"):
-			reader.reconstructTable('loca', b'\x00')
+			reader.reconstructTable('loca')
+
+	def test_reconstruct_loca_match_orig_size(self):
+		reader = WOFF2Reader(self.file)
+		reader.tables['loca'].origLength -= 1
+		with self.assertRaisesRegexp(
+				ttLib.TTLibError, "'loca' table doesn't match original size"):
+			reader.reconstructTable('loca')
 
 
 class WOFF2DirectoryEntryTest(unittest.TestCase):
