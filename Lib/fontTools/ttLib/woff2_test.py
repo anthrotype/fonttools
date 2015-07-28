@@ -361,14 +361,14 @@ class WOFF2GlyfTableTest(unittest.TestCase):
 		data = glyfTable.compile(self.font)
 		self.assertEqual(self.origGlyfData, data)
 
-	def test_reconstruct_glyf_incorrect_glyph_order(self):
+	def test_reconstruct_glyf_incorrect_glyphOrder(self):
 		glyfTable = WOFF2GlyfTable()
 		badGlyphOrder = self.font.getGlyphOrder()[:-1]
 		self.font.setGlyphOrder(badGlyphOrder)
 		with self.assertRaisesRegexp(ttLib.TTLibError, "incorrect glyphOrder"):
 			glyfTable.reconstruct(self.transformedGlyfData, self.font)
 
-	def test_reconstruct_glyf_dummy_glyphOrder(self):
+	def test_reconstruct_glyf_missing_glyphOrder(self):
 		glyfTable = WOFF2GlyfTable()
 		if hasattr(self.font, 'glyphOrder'):
 			del self.font.glyphOrder
@@ -395,29 +395,54 @@ class WOFF2GlyfTableTest(unittest.TestCase):
 		data = locaTable.compile(self.font)
 		self.assertEqual(self.origLocaData, data)
 
-	def test_transform_glyf(self):
-		glyfTable = self.font['glyf']
-		data = glyfTable.transform(self.font)
-		self.assertEqual(self.transformedGlyfData, data)
-
-	def test_decode_glyf_header_not_enough_data(self):
+	def test_reconstruct_glyf_header_not_enough_data(self):
 		with self.assertRaisesRegexp(ttLib.TTLibError, "not enough 'glyf' data"):
 			WOFF2GlyfTable().reconstruct(b"", self.font)
 
-	def test_decode_glyf_table_incorrect_size(self):
+	def test_reconstruct_glyf_table_incorrect_size(self):
 		msg = "incorrect size of transformed 'glyf'"
 		with self.assertRaisesRegexp(ttLib.TTLibError, msg):
 			WOFF2GlyfTable().reconstruct(self.transformedGlyfData + b"\x00", self.font)
 		with self.assertRaisesRegexp(ttLib.TTLibError, msg):
 			WOFF2GlyfTable().reconstruct(self.transformedGlyfData[:-1], self.font)
 
-	def test_reconstruct_and_transform_glyf(self):
+	def test_transform_glyf(self):
+		glyfTable = self.font['glyf']
+		data = glyfTable.transform(self.font)
+		self.assertEqual(self.transformedGlyfData, data)
+
+	def test_transform_glyf_incorrect_glyphOrder(self):
+		glyfTable = self.font['glyf']
+		badGlyphOrder = self.font.getGlyphOrder()[:-1]
+		if hasattr(glyfTable, 'glyphOrder'):
+			del glyfTable.glyphOrder
+		self.font.setGlyphOrder(badGlyphOrder)
+		with self.assertRaisesRegexp(ttLib.TTLibError, "incorrect glyphOrder"):
+			data = glyfTable.transform(self.font)
+		glyfTable.glyphOrder = badGlyphOrder
+		with self.assertRaisesRegexp(ttLib.TTLibError, "incorrect glyphOrder"):
+			data = glyfTable.transform(self.font)
+
+	def test_transform_glyf_missing_glyphOrder(self):
+		glyfTable = self.font['glyf']
+		badGlyphOrder = self.font.getGlyphOrder()[:-1]
+		if hasattr(glyfTable, 'glyphOrder'):
+			del glyfTable.glyphOrder
+		if hasattr(self.font, 'glyphOrder'):
+			del self.font.glyphOrder
+		numGlyphs = self.font['maxp'].numGlyphs
+		del self.font['maxp']
+		glyfTable.transform(self.font)
+		expected = ["glyph%d" % i for i in range(numGlyphs)]
+		self.assertEqual(expected, glyfTable.glyphOrder)
+
+	def test_roundtrip_glyf_1(self):
 		glyfTable = WOFF2GlyfTable()
 		glyfTable.reconstruct(self.transformedGlyfData, self.font)
 		data = glyfTable.transform(self.font)
 		self.assertEqual(self.transformedGlyfData, data)
 
-	def test_transform_and_reconstruct_glyf(self):
+	def test_roundtrip_glyf_2(self):
 		glyfTable = self.font['glyf']
 		transformedData = glyfTable.transform(self.font)
 		newGlyfTable = WOFF2GlyfTable()
