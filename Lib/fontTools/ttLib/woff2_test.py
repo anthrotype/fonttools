@@ -170,12 +170,6 @@ class WOFF2ReaderTTFTest(unittest.TestCase):
 		normLocaData = get_normalised_data(self.font, 'loca')
 		self.assertEqual(normLocaData, reconstructedData)
 
-	def test_transformed_loca_is_null(self):
-		reader = WOFF2Reader(self.file)
-		reader.tables['loca'].length = 1
-		with self.assertRaisesRegexp(ttLib.TTLibError, "expected 0"):
-			reader.reconstructTable('loca')
-
 	def test_reconstruct_loca_match_orig_size(self):
 		reader = WOFF2Reader(self.file)
 		reader.tables['loca'].origLength -= 1
@@ -187,14 +181,13 @@ class WOFF2ReaderTTFTest(unittest.TestCase):
 class WOFF2DirectoryEntryTest(unittest.TestCase):
 
 	def setUp(self):
-		""" called multiple times, before every test method """
 		self.entry = WOFF2DirectoryEntry()
 
 	def test_not_enough_data_table_flags(self):
 		with self.assertRaisesRegexp(ttLib.TTLibError, "can't read table 'flags'"):
 			self.entry.fromString(b"")
 
-	def test_not_enough_data_table_unknown_tag(self):
+	def test_not_enough_data_table_tag(self):
 		incompleteData = bytearray([0x3F, 0, 0, 0])
 		with self.assertRaisesRegexp(ttLib.TTLibError, "can't read table 'tag'"):
 			self.entry.fromString(bytes(incompleteData))
@@ -208,14 +201,14 @@ class WOFF2DirectoryEntryTest(unittest.TestCase):
 		data += packBase128(random.randint(1, 100))  # origLength
 		data += packBase128(1)  # non-zero transformLength
 		with self.assertRaisesRegexp(
-				ttLib.TTLibError, 'transformLength .* loca .* must be 0'):
+				ttLib.TTLibError, "transformLength of the 'loca' table must be 0"):
 			self.entry.fromString(data)
 
 	def test_fromFile(self):
 		unknownTag = Tag('ZZZZ')
 		data = bytechr(getKnownTagIndex(unknownTag))
 		data += unknownTag.tobytes()
-		data += packBase128(12345)
+		data += packBase128(random.randint(1, 100))
 		expectedPos = len(data)
 		f = StringIO(data + b'\0'*100)
 		self.entry.fromFile(f)
@@ -224,8 +217,8 @@ class WOFF2DirectoryEntryTest(unittest.TestCase):
 	def test_transformed_toString(self):
 		self.entry.tag = Tag('glyf')
 		self.entry.flags = getKnownTagIndex(self.entry.tag)
-		self.entry.origLength = 123456
-		self.entry.length = 12345
+		self.entry.origLength = random.randint(101, 200)
+		self.entry.length = random.randint(1, 100)
 		expectedSize = (woff2FlagsSize + base128Size(self.entry.origLength) +
 			base128Size(self.entry.length))
 		data = self.entry.toString()
@@ -242,7 +235,7 @@ class WOFF2DirectoryEntryTest(unittest.TestCase):
 	def test_unknown_toString(self):
 		self.entry.tag = Tag('ZZZZ')
 		self.entry.flags = woff2UnknownTagIndex
-		self.entry.origLength = 123456
+		self.entry.origLength = random.randint(1, 100)
 		expectedSize = (woff2FlagsSize + woff2UnknownTagSize +
 			base128Size(self.entry.origLength))
 		data = self.entry.toString()
@@ -251,7 +244,7 @@ class WOFF2DirectoryEntryTest(unittest.TestCase):
 
 class DummyReader(WOFF2Reader):
 
-	def __init__(self, file):
+	def __init__(self, file, checkChecksums=1, fontNumber=-1):
 		self.file = file
 		for attr in ('majorVersion', 'minorVersion', 'metaOffset', 'metaLength',
 				'metaOrigLength', 'privLength', 'privOffset'):
@@ -266,8 +259,9 @@ class WOFF2FlavorDataTest(unittest.TestCase):
 		with open(METADATA, 'rb') as f:
 			cls.xml_metadata = f.read()
 		cls.compressed_metadata = brotli.compress(cls.xml_metadata, mode=brotli.MODE_TEXT)
-		cls.fontdata = b'\0'*96  # 4-byte aligned
-		cls.privData = bytes(bytearray(random.sample(range(32, 127), 20)))
+		# make random byte strings; font data must be 4-byte aligned
+		cls.fontdata = bytes(bytearray(random.sample(range(0, 256), 80)))
+		cls.privData = bytes(bytearray(random.sample(range(0, 256), 20)))
 
 	def setUp(self):
 		self.file = StringIO(self.fontdata)
@@ -351,6 +345,9 @@ class WOFF2GlyfTableTest(unittest.TestCase):
 			self.origLocaData,
 			self.origGlyfData)
 
+	def tearDown(self):
+		del self.font
+
 	def test_reconstruct_glyf_padded(self):
 		glyfTable = WOFF2GlyfTable()
 		glyfTable.reconstruct(self.transformedGlyfData, self.font)
@@ -371,7 +368,7 @@ class WOFF2GlyfTableTest(unittest.TestCase):
 		with self.assertRaisesRegexp(ttLib.TTLibError, "incorrect glyphOrder"):
 			glyfTable.reconstruct(self.transformedGlyfData, self.font)
 
-	def test_reconstruct_glyf_no_glyphOrder(self):
+	def test_reconstruct_glyf_dummy_glyphOrder(self):
 		glyfTable = WOFF2GlyfTable()
 		if hasattr(self.font, 'glyphOrder'):
 			del self.font.glyphOrder
