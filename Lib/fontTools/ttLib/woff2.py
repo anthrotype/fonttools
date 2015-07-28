@@ -129,8 +129,6 @@ class WOFF2Reader(SFNTReader):
 			# compile reconstructed glyf table and set loca's locations
 			data = glyfTable.compile(self.ttFont, padding=4)
 		elif tag == 'loca':
-			if len(rawData) != 0:
-				raise TTLibError("expected 0, received %d bytes" % len(rawData))
 			if 'glyf' not in self.done:
 				# make sure glyf is loaded first
 				self['glyf']
@@ -489,7 +487,7 @@ class WOFF2DirectoryEntry(DirectoryEntry):
 			self.length, data = unpackBase128(data)
 			if self.tag == 'loca' and self.length != 0:
 				raise TTLibError(
-					"the transformLength of the loca table must be 0")
+					"the transformLength of the 'loca' table must be 0")
 		# return left over data
 		return data
 
@@ -639,20 +637,16 @@ class WOFF2GlyfTable(getTableClass('glyf')):
 			self.nContourStream.byteswap()
 		assert len(self.nContourStream) == self.numGlyphs
 
+		if 'head' in ttFont:
+			ttFont['head'].indexToLocFormat = self.indexFormat
 		try:
 			self.glyphOrder = ttFont.getGlyphOrder()
 		except:
-			self.glyphOrder = None
-		if 'head' in ttFont:
-			ttFont['head'].indexToLocFormat = self.indexFormat
-		if 'maxp' in ttFont:
-			ttFont['maxp'].numGlyphs = self.numGlyphs
-		if self.glyphOrder is None:
 			self.glyphOrder = ["glyph%d" % i for i in range(self.numGlyphs)]
-			ttFont.setGlyphOrder(self.glyphOrder)
 		else:
 			if len(self.glyphOrder) != self.numGlyphs:
-				raise TTLibError("incorrect glyphOrder: expected %d glyphs, found %d" %
+				raise TTLibError(
+					"incorrect glyphOrder: expected %d glyphs, found %d" %
 					(len(self.glyphOrder), self.numGlyphs))
 
 		glyphs = self.glyphs = {}
