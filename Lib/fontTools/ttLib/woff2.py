@@ -198,8 +198,12 @@ class WOFF2Writer(SFNTWriter):
 		if len(self.tables) != self.numTables:
 			raise TTLibError("wrong number of tables; expected %d, found %d" % (self.numTables, len(self.tables)))
 
-		if {'glyf', 'loca'}.issubset(self.tables):
+		if self.sfntVersion in ("\x00\x01\x00\x00", "true"):
 			# TT-flavored
+			requiredTables = ('head', 'maxp', 'glyf', 'loca')
+			if not set(requiredTables).issubset(self.tables):
+				raise TTLibError("missing required tables: %s" %
+					[t for t in requiredTables if t not in self.tables])
 			ttFont = self.ttFont = newTTFont(
 				headData=self.tables['head'].data,
 				maxpData=self.tables['maxp'].data,
@@ -211,7 +215,10 @@ class WOFF2Writer(SFNTWriter):
 			self.tables['loca'].data = ttFont['loca'].compile(ttFont)
 		else:
 			# CFF-flavored
+			if 'head' not in self.tables:
+				raise TTLibError("missing required table: 'head'")
 			ttFont = self.ttFont = newTTFont(headData=self.tables['head'].data)
+
 		# set bit 11 of head 'flags' to indicate that the font has undergone a
 		# 'lossless modifying transform'
 		ttFont['head'].flags |= (1 << 11)
