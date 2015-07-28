@@ -364,7 +364,7 @@ class WOFF2WriterTest(unittest.TestCase):
 		woff2file.seek(0)
 		w2font = ttLib.TTFont(woff2file)
 		normFile.seek(0)
-		normFont = ttLib.TTFont(normFile)
+		normFont = ttLib.TTFont(normFile, checkChecksums=2)
 		for tag in [t for t in self.tags if t != 'DSIG']:
 			w2CheckSum = ttLib.sfnt.calcChecksum(w2font.reader[tag])
 			normCheckSum = ttLib.sfnt.calcChecksum(normFont.reader[tag])
@@ -476,14 +476,13 @@ class WOFF2GlyfTableTest(unittest.TestCase):
 		del glyfTable.glyphOrder
 		self.font.setGlyphOrder(badGlyphOrder)
 		with self.assertRaisesRegexp(ttLib.TTLibError, "incorrect glyphOrder"):
-			data = glyfTable.transform(self.font)
+			glyfTable.transform(self.font)
 		glyfTable.glyphOrder = badGlyphOrder
 		with self.assertRaisesRegexp(ttLib.TTLibError, "incorrect glyphOrder"):
-			data = glyfTable.transform(self.font)
+			glyfTable.transform(self.font)
 
 	def test_transform_glyf_missing_glyphOrder(self):
 		glyfTable = self.font['glyf']
-		badGlyphOrder = self.font.getGlyphOrder()[:-1]
 		del glyfTable.glyphOrder
 		del self.font.glyphOrder
 		numGlyphs = self.font['maxp'].numGlyphs
