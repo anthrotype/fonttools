@@ -204,12 +204,13 @@ class WOFF2Writer(SFNTWriter):
 			if not set(requiredTables).issubset(self.tables):
 				raise TTLibError("missing required tables: %s" %
 					[t for t in requiredTables if t not in self.tables])
+			# decompile glyf and loca tables
 			ttFont = self.ttFont = newTTFont(
 				headData=self.tables['head'].data,
 				maxpData=self.tables['maxp'].data,
 				locaData=self.tables['loca'].data,
 				glyfData=self.tables['glyf'].data)
-			# pad glyph offsets to multiple of 4 bytes
+			# re-compile glyf table with glyph offsets padded to multiples of 4 bytes
 			self.tables['glyf'].data = ttFont['glyf'].compile(ttFont, padding=4)
 			# set head table's indexToLocFormat while re-compiling loca data
 			self.tables['loca'].data = ttFont['loca'].compile(ttFont)
@@ -217,6 +218,7 @@ class WOFF2Writer(SFNTWriter):
 			# CFF-flavored
 			if 'head' not in self.tables:
 				raise TTLibError("missing required table: 'head'")
+			# only decompile head table
 			ttFont = self.ttFont = newTTFont(headData=self.tables['head'].data)
 
 		# set bit 11 of head 'flags' to indicate that the font has undergone a
