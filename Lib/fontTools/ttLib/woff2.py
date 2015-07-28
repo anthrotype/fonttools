@@ -642,6 +642,8 @@ class WOFF2GlyfTable(getTableClass('glyf')):
 		try:
 			self.glyphOrder = ttFont.getGlyphOrder()
 		except:
+			self.glyphOrder = None
+		if self.glyphOrder is None:
 			self.glyphOrder = ["glyph%d" % i for i in range(self.numGlyphs)]
 		else:
 			if len(self.glyphOrder) != self.numGlyphs:
@@ -655,7 +657,19 @@ class WOFF2GlyfTable(getTableClass('glyf')):
 			glyphs[glyphName] = glyph
 
 	def transform(self, ttFont):
+		""" Return transformed 'glyf' data """
 		self.numGlyphs = len(self.glyphs)
+		if not hasattr(self, "glyphOrder"):
+			try:
+				self.glyphOrder = ttFont.getGlyphOrder()
+			except:
+				self.glyphOrder = None
+			if self.glyphOrder is None:
+				self.glyphOrder = ["glyph%d" % i for i in range(self.numGlyphs)]
+		if len(self.glyphOrder) != self.numGlyphs:
+			raise TTLibError(
+				"incorrect glyphOrder: expected %d glyphs, found %d" %
+				(len(self.glyphOrder), self.numGlyphs))
 		if 'maxp' in ttFont:
 			ttFont['maxp'].numGlyphs = self.numGlyphs
 		self.indexFormat = ttFont['head'].indexToLocFormat
