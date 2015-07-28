@@ -342,8 +342,7 @@ class WOFF2GlyfTableTest(unittest.TestCase):
 		cls.origMaxpData = font.getTableData('maxp')
 		infile = StringIO(TT_WOFF2.getvalue())
 		reader = WOFF2Reader(infile)
-		glyfEntry = reader.tables['glyf']
-		cls.transformedGlyfData = glyfEntry.loadData(reader.transformBuffer)
+		cls.transformedGlyfData = reader.getTableData('glyf')
 
 	def setUp(self):
 		self.font = newTTFont(
