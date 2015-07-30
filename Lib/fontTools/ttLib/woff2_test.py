@@ -5,11 +5,12 @@ from .woff2 import (WOFF2Reader, woff2DirectorySize, woff2DirectoryFormat,
 	woff2FlagsSize, woff2UnknownTagSize, woff2Base128MaxSize, WOFF2DirectoryEntry,
 	getKnownTagIndex, packBase128, base128Size, woff2UnknownTagIndex,
 	WOFF2FlavorData, woff2TransformedTableTags, WOFF2GlyfTable, WOFF2LocaTable,
-	newTTFont, WOFF2Writer)
+	WOFF2Writer, padData)
 import unittest
 import sstruct
 import os
 import random
+import copy
 
 haveBrotli = False
 try:
@@ -115,26 +116,75 @@ class WOFF2ReaderTest(unittest.TestCase):
 			reader.reconstructTable('ZZZZ')
 
 
-def get_normalised_data(font, tag, padding=4):
+def normalise_table(font, tag, padding=4):
+	""" Return normalised table data. Keep 'font' instance unmodified. """
 	assert tag in ('glyf', 'loca', 'head')
-	assert {'glyf', 'loca', 'head'}.issubset(font.keys())
-	glyfData = font.getTableData('glyf')
-	origIndexFormat = font['head'].indexToLocFormat
-	origLocations = font['loca'].locations[:]
-	glyfTable = WOFF2GlyfTable()
-	glyfTable.decompile(glyfData, font)
-	if tag == 'glyf':
-		data = glyfTable.compile(font, padding=padding)
-	elif tag == 'loca':
-		glyfTable.compile(font, padding=padding)
-		data = font['loca'].compile(font)
-	elif tag == 'head':
-		glyfTable.compile(font, padding=padding)
-		font['loca'].compile(font)
-		data = font['head'].compile(font)
-	font['loca'].set(origLocations)
-	font['head'].indexToLocFormat = origIndexFormat
-	return data
+	assert tag in font
+	if tag == 'head':
+		origHeadFlags = font['head'].flags
+		font['head'].flags |= (1 << 11)
+		tableData = font['head'].compile(font)
+	if font.sfntVersion in ("\x00\x01\x00\x00", "true"):
+		assert {'glyf', 'loca', 'head'}.issubset(font.keys())
+		origIndexFormat = font['head'].indexToLocFormat
+		if hasattr(font['loca'], 'locations'):
+			origLocations = font['loca'].locations[:]
+		else:
+			origLocations = []
+		glyfTable = WOFF2GlyfTable()
+		glyfTable.decompile(font.getTableData('glyf'), font)
+		if tag == 'glyf':
+			tableData = glyfTable.compile(font, padding=padding)
+		elif tag == 'loca':
+			glyfTable.compile(font, padding=padding)
+			tableData = font['loca'].compile(font)
+		if tag == 'head':
+			glyfTable.compile(font, padding=padding)
+			font['loca'].compile(font)
+			tableData = font['head'].compile(font)
+		font['head'].indexToLocFormat = origIndexFormat
+		font['loca'].set(origLocations)
+	if tag == 'head':
+		font['head'].flags = origHeadFlags
+	return tableData
+
+
+def normalise_font(font):
+	""" Return normalised font data. Keep 'font' instance unmodified. """
+	# drop DSIG but keep a copy
+	DSIG_copy = copy.deepcopy(font['DSIG'])
+	del font['DSIG']
+	# ovverride TTFont attributes
+	origFlavor = font.flavor
+	origRecalcBBoxes = font.recalcBBoxes
+	origRecalcTimestamp = font.recalcTimestamp
+	origLazy = font.lazy
+	font.flavor = None
+	font.recalcBBoxes = False
+	font.recalcTimestamp = False
+	font.lazy = True
+	# save font to temporary stream
+	infile = StringIO()
+	font.save(infile)
+	infile.seek(0)
+	# reorder tables alphabetically
+	outfile = StringIO()
+	reader = ttLib.sfnt.SFNTReader(infile)
+	writer = ttLib.sfnt.SFNTWriter(
+		outfile, len(reader.tables), reader.sfntVersion, reader.flavor, reader.flavorData)
+	for tag in sorted(reader.keys()):
+		if tag in woff2TransformedTableTags + ('head',):
+			writer[tag] = normalise_table(font, tag)
+		else:
+			writer[tag] = reader[tag]
+	writer.close()
+	# restore font attributes
+	font['DSIG'] = DSIG_copy
+	font.flavor = origFlavor
+	font.recalcBBoxes = origRecalcBBoxes
+	font.recalcTimestamp = origRecalcTimestamp
+	font.lazy = origLazy
+	return outfile.getvalue()
 
 
 class WOFF2ReaderTTFTest(unittest.TestCase):
@@ -152,13 +202,13 @@ class WOFF2ReaderTTFTest(unittest.TestCase):
 	def test_reconstruct_glyf(self):
 		woff2Reader = WOFF2Reader(self.file)
 		reconstructedData = woff2Reader['glyf']
-		normGlyfData = get_normalised_data(self.font, 'glyf')
+		normGlyfData = normalise_table(self.font, 'glyf')
 		self.assertEqual(normGlyfData, reconstructedData)
 
 	def test_reconstruct_loca(self):
 		woff2Reader = WOFF2Reader(self.file)
 		reconstructedData = woff2Reader['loca']
-		normLocaData = get_normalised_data(self.font, 'loca')
+		normLocaData = normalise_table(self.font, 'loca')
 		self.assertEqual(normLocaData, reconstructedData)
 
 	def test_reconstruct_loca_match_orig_size(self):
@@ -304,10 +354,21 @@ class WOFF2WriterTest(unittest.TestCase):
 		cls.tags = [t for t in cls.font.keys() if t != 'GlyphOrder']
 		cls.numTables = len(cls.tags)
 		cls.file = StringIO(CFF_WOFF2.getvalue())
+		cls.file.seek(0, 2)
+		cls.length = (cls.file.tell() + 3) & ~3
+		cls.setUpFlavorData()
+
+	@classmethod
+	def setUpFlavorData(cls):
+		assert os.path.exists(METADATA)
+		with open(METADATA, 'rb') as f:
+			cls.xml_metadata = f.read()
+		cls.compressed_metadata = brotli.compress(cls.xml_metadata, mode=brotli.MODE_TEXT)
+		cls.privData = bytes(bytearray(random.sample(range(0, 256), 20)))
 
 	def setUp(self):
 		self.file.seek(0)
-		self.writer = WOFF2Writer(StringIO(), self.numTables)
+		self.writer = WOFF2Writer(StringIO(), self.numTables, self.font.sfntVersion)
 
 	def test_DSIG_dropped(self):
 		self.writer['DSIG'] = b"\0"
@@ -340,37 +401,91 @@ class WOFF2WriterTest(unittest.TestCase):
 		self.assertEqual(origFlags, restoredFlags)
 
 	def test_tables_sorted_alphabetically(self):
-		expected = sorted([t for t in self.font.keys() if t not in ('GlyphOrder, DSIG')])
+		expected = sorted([t for t in self.tags if t != 'DSIG'])
 		woff2font = ttLib.TTFont(self.file)
 		self.assertEqual(expected, woff2font.reader.tableOrder)
 
 	def test_checksums(self):
-		# write WOFF2 font file
-		woff2file = StringIO()
-		woff2writer = WOFF2Writer(woff2file, self.numTables, self.font.sfntVersion)
-		for tag in sorted(self.tags):
-			woff2writer[tag] = self.font.getTableData(tag)
-		woff2writer.close()
-		# write normalised TTF font file
-		normTags = sorted([t for t in self.tags if t != 'DSIG'])
-		normNumTables = self.numTables - 1
-		normFile = StringIO()
-		sfntWriter = ttLib.sfnt.SFNTWriter(normFile, normNumTables, self.font.sfntVersion)
-		for tag in normTags:
-			# the WOFF2Writer entries 'data' attribute store the normalised table data
-			sfntWriter[tag] = woff2writer.tables[tag].data
-		sfntWriter.close()
-		# check that fonts have the same table checksums and checkSumAdjustment
-		woff2file.seek(0)
-		w2font = ttLib.TTFont(woff2file)
+		normFile = StringIO(normalise_font(self.font))
 		normFile.seek(0)
 		normFont = ttLib.TTFont(normFile, checkChecksums=2)
+		w2font = ttLib.TTFont(self.file)
 		for tag in [t for t in self.tags if t != 'DSIG']:
-			w2CheckSum = ttLib.sfnt.calcChecksum(w2font.reader[tag])
-			normCheckSum = ttLib.sfnt.calcChecksum(normFont.reader[tag])
+			if tag == "head":
+				data = w2font.reader[tag]
+				data = data[:8] + b'\0\0\0\0' + data[12:]
+				w2CheckSum = ttLib.sfnt.calcChecksum(data)
+				normCheckSum = ttLib.sfnt.calcChecksum(data)
+			else:
+				w2CheckSum = ttLib.sfnt.calcChecksum(w2font.reader[tag])
+				normCheckSum = ttLib.sfnt.calcChecksum(normFont.reader[tag])
 			self.assertEqual(w2CheckSum, normCheckSum)
 		normCheckSumAdjustment = normFont['head'].checkSumAdjustment
 		self.assertEqual(normCheckSumAdjustment, w2font['head'].checkSumAdjustment)
+
+	def test_calcSFNTChecksumsLengthsAndOffsets(self):
+		normFont = ttLib.TTFont(StringIO(normalise_font(self.font)))
+		for tag in self.tags:
+			self.writer[tag] = self.font.getTableData(tag)
+		self.writer._normaliseGlyfAndLoca()
+		self.writer._setHeadTransformFlag()
+		self.writer.tableOrder.sort()
+		self.writer._calcSFNTChecksumsLengthsAndOffsets()
+		for tag, entry in normFont.reader.tables.items():
+			self.assertEqual(entry.offset, self.writer.tables[tag].origOffset)
+			self.assertEqual(entry.length, self.writer.tables[tag].origLength)
+			self.assertEqual(entry.checkSum, self.writer.tables[tag].checkSum)
+
+	def test_bad_sfntVersion(self):
+		for i in range(self.numTables):
+			self.writer[bytechr(65 + i)*4] = b"\0"
+		self.writer.sfntVersion = 'ZZZZ'
+		with self.assertRaisesRegexp(ttLib.TTLibError, "bad sfntVersion"):
+			self.writer.close()
+
+	def test_calcTotalSize_no_flavorData(self):
+		expected = self.length
+		self.writer.file = StringIO()
+		for tag in self.tags:
+			self.writer[tag] = self.font.getTableData(tag)
+		self.writer.close()
+		self.assertEqual(expected, self.writer.length)
+		self.assertEqual(expected, self.writer.file.tell())
+
+	def test_calcTotalSize_metaData(self):
+		expected = self.length + len(self.compressed_metadata)
+		flavorData = self.writer.flavorData = WOFF2FlavorData()
+		flavorData.metaData = self.xml_metadata
+		self.writer.file = StringIO()
+		for tag in self.tags:
+			self.writer[tag] = self.font.getTableData(tag)
+		self.writer.close()
+		self.assertEqual(expected, self.writer.length)
+		self.assertEqual(expected, self.writer.file.tell())
+
+	def test_calcTotalSize_privData(self):
+		expected = self.length + len(self.privData)
+		flavorData = self.writer.flavorData = WOFF2FlavorData()
+		flavorData.privData = self.privData
+		self.writer.file = StringIO()
+		for tag in self.tags:
+			self.writer[tag] = self.font.getTableData(tag)
+		self.writer.close()
+		self.assertEqual(expected, self.writer.length)
+		self.assertEqual(expected, self.writer.file.tell())
+
+	def test_calcTotalSize_metaData_and_privData(self):
+		metaDataLength = (len(self.compressed_metadata) + 3) & ~3
+		expected = self.length + metaDataLength + len(self.privData)
+		flavorData = self.writer.flavorData = WOFF2FlavorData()
+		flavorData.metaData = self.xml_metadata
+		flavorData.privData = self.privData
+		self.writer.file = StringIO()
+		for tag in self.tags:
+			self.writer[tag] = self.font.getTableData(tag)
+		self.writer.close()
+		self.assertEqual(expected, self.writer.length)
+		self.assertEqual(expected, self.writer.file.tell())
 
 
 class WOFF2WriterTTFTest(WOFF2WriterTest):
@@ -382,6 +497,23 @@ class WOFF2WriterTTFTest(WOFF2WriterTest):
 		cls.tags = [t for t in cls.font.keys() if t != 'GlyphOrder']
 		cls.numTables = len(cls.tags)
 		cls.file = StringIO(TT_WOFF2.getvalue())
+		cls.file.seek(0, 2)
+		cls.length = (cls.file.tell() + 3) & ~3
+		cls.setUpFlavorData()
+
+	def test_normaliseGlyfAndLoca(self):
+		normTables = {}
+		for tag in ('head', 'loca', 'glyf'):
+			normTables[tag] = normalise_table(self.font, tag)
+		for tag in self.tags:
+			tableData = self.font.getTableData(tag)
+			self.writer[tag] = tableData
+			if tag in normTables:
+				self.assertNotEqual(tableData, normTables[tag])
+		self.writer._normaliseGlyfAndLoca()
+		self.writer._setHeadTransformFlag()
+		for tag in normTables:
+			self.assertEqual(self.writer.tables[tag].data, normTables[tag])
 
 
 class WOFF2GlyfTableTest(unittest.TestCase):
@@ -390,20 +522,26 @@ class WOFF2GlyfTableTest(unittest.TestCase):
 	def setUpClass(cls):
 		font = ttLib.TTFont(recalcBBoxes=False, recalcTimestamp=False)
 		font.importXML(TTX, quiet=True)
-		cls.origGlyfData = font.getTableData('glyf')
-		cls.origLocaData = font.getTableData('loca')
-		cls.origHeadData = font.getTableData('head')
-		cls.origMaxpData = font.getTableData('maxp')
+		cls.tables = {}
+		cls.transformedTags = ('maxp', 'head', 'loca', 'glyf')
+		for tag in reversed(cls.transformedTags):
+			cls.tables[tag] = font.getTableData(tag)
+		cls.glyphOrder = ["glyph%d" % i for i in range(font['maxp'].numGlyphs)]
 		infile = StringIO(TT_WOFF2.getvalue())
 		reader = WOFF2Reader(infile)
-		cls.transformedGlyfData = reader.getTableData('glyf')
+		cls.transformedGlyfData = reader.tables['glyf'].loadData(
+			reader.transformBuffer)
 
 	def setUp(self):
-		self.font = newTTFont(
-			self.origHeadData,
-			self.origMaxpData,
-			self.origLocaData,
-			self.origGlyfData)
+		self.font = font = ttLib.TTFont(
+			recalcBBoxes=False, recalcTimestamp=False)
+		font['head'] = ttLib.getTableClass('head')()
+		font['maxp'] = ttLib.getTableClass('maxp')()
+		font['loca'] = WOFF2LocaTable()
+		font['glyf'] = WOFF2GlyfTable()
+		font.setGlyphOrder(self.glyphOrder)
+		for tag in self.transformedTags:
+			font[tag].decompile(self.tables[tag], font)
 
 	def tearDown(self):
 		del self.font
@@ -412,14 +550,14 @@ class WOFF2GlyfTableTest(unittest.TestCase):
 		glyfTable = WOFF2GlyfTable()
 		glyfTable.reconstruct(self.transformedGlyfData, self.font)
 		data = glyfTable.compile(self.font, padding=4)
-		normGlyfData = get_normalised_data(self.font, 'glyf')
+		normGlyfData = normalise_table(self.font, 'glyf')
 		self.assertEqual(normGlyfData, data)
 
 	def test_reconstruct_glyf_unpadded(self):
 		glyfTable = WOFF2GlyfTable()
 		glyfTable.reconstruct(self.transformedGlyfData, self.font)
 		data = glyfTable.compile(self.font)
-		self.assertEqual(self.origGlyfData, data)
+		self.assertEqual(self.tables['glyf'], data)
 
 	def test_reconstruct_glyf_incorrect_glyphOrder(self):
 		glyfTable = WOFF2GlyfTable()
@@ -443,7 +581,7 @@ class WOFF2GlyfTableTest(unittest.TestCase):
 		glyfTable.reconstruct(self.transformedGlyfData, self.font)
 		glyfTable.compile(self.font, padding=4)
 		data = locaTable.compile(self.font)
-		normLocaData = get_normalised_data(self.font, 'loca')
+		normLocaData = normalise_table(self.font, 'loca')
 		self.assertEqual(normLocaData, data)
 
 	def test_reconstruct_loca_unpadded(self):
@@ -452,7 +590,7 @@ class WOFF2GlyfTableTest(unittest.TestCase):
 		glyfTable.reconstruct(self.transformedGlyfData, self.font)
 		glyfTable.compile(self.font)
 		data = locaTable.compile(self.font)
-		self.assertEqual(self.origLocaData, data)
+		self.assertEqual(self.tables['loca'], data)
 
 	def test_reconstruct_glyf_header_not_enough_data(self):
 		with self.assertRaisesRegexp(ttLib.TTLibError, "not enough 'glyf' data"):
@@ -503,7 +641,7 @@ class WOFF2GlyfTableTest(unittest.TestCase):
 		newGlyfTable = WOFF2GlyfTable()
 		newGlyfTable.reconstruct(transformedData, self.font)
 		reconstructedData = newGlyfTable.compile(self.font, padding=4)
-		normGlyfData = get_normalised_data(self.font, 'glyf')
+		normGlyfData = normalise_table(self.font, 'glyf')
 		self.assertEqual(normGlyfData, reconstructedData)
 
 
