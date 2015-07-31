@@ -568,7 +568,6 @@ class WOFF2GlyfTable(getTableClass('glyf')):
 
 	def decompile(self, data, ttFont):
 		"""Set dummy glyph order based on glyph IDs before decompiling."""
-
 		try:
 			glyphOrder = ttFont.getGlyphOrder()
 		except:
