@@ -203,19 +203,19 @@ class WOFF2Writer(SFNTWriter):
 
 	def _normaliseGlyfAndLoca(self):
 		""" If TrueType-flavoured, normalise glyph offsets to multiples of 4 bytes.
-		Also update the 'head' table's 'indexToLocFormat' while recompiling 'loca'.
 		"""
 		if self.sfntVersion == "OTTO":
 			return
 		for tag in ('maxp', 'head', 'loca', 'glyf'):
 			self._decompileTable(tag)
-		# re-compile glyf and loca using 4-byte padding
+		# re-compile glyf and loca using 4-byte padding; also update the head's
+		# 'indexToLocFormat' while recompiling 'loca'
 		for tag in ('glyf', 'loca'):
 			self._compileTable(tag)
 
 	def _setHeadTransformFlag(self):
 		""" Set bit 11 of 'head' table flags to indicate that the font has undergone
-		a lossless modifying transform."""
+		a lossless modifying transform. Re-compile head table data."""
 		self._decompileTable('head')
 		self.ttFont['head'].flags |= (1 << 11)
 		self._compileTable('head')
