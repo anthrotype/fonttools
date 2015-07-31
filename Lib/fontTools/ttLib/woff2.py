@@ -459,10 +459,6 @@ woff2GlyfTableFormat = """
 
 woff2GlyfTableFormatSize = sstruct.calcsize(woff2GlyfTableFormat)
 
-woff2GlyfSubStreams = (
-	'nContourStream', 'nPointsStream', 'flagStream', 'glyphStream',
-	'compositeStream', 'bboxStream', 'instructionStream')
-
 bboxFormat = """
 		>	# big endian
 		xMin:				h
@@ -563,6 +559,10 @@ class WOFF2LocaTable(getTableClass('loca')):
 class WOFF2GlyfTable(getTableClass('glyf')):
 	"""Decoder/Encoder for WOFF2 'glyf' table transform."""
 
+	subStreams = (
+		'nContourStream', 'nPointsStream', 'flagStream', 'glyphStream',
+		'compositeStream', 'bboxStream', 'instructionStream')
+
 	def __init__(self, tag=None):
 		self.tableTag = Tag(tag or 'glyf')
 
@@ -633,7 +633,7 @@ class WOFF2GlyfTable(getTableClass('glyf')):
 		dummy, data = sstruct.unpack2(woff2GlyfTableFormat, data, self)
 		offset = woff2GlyfTableFormatSize
 
-		for stream in woff2GlyfSubStreams:
+		for stream in self.subStreams:
 			size = getattr(self, stream + 'Size')
 			setattr(self, stream, data[:size])
 			data = data[size:]
@@ -692,7 +692,7 @@ class WOFF2GlyfTable(getTableClass('glyf')):
 			ttFont['maxp'].numGlyphs = self.numGlyphs
 		self.indexFormat = ttFont['head'].indexToLocFormat
 
-		for stream in woff2GlyfSubStreams:
+		for stream in self.subStreams:
 			setattr(self, stream, b"")
 		bboxBitmapSize = ((self.numGlyphs + 31) >> 5) << 2
 		self.bboxBitmap = array.array('B', [0]*bboxBitmapSize)
@@ -701,11 +701,11 @@ class WOFF2GlyfTable(getTableClass('glyf')):
 			self._encodeGlyph(glyphID)
 
 		self.bboxStream = self.bboxBitmap.tostring() + self.bboxStream
-		for stream in woff2GlyfSubStreams:
+		for stream in self.subStreams:
 			setattr(self, stream + 'Size', len(getattr(self, stream)))
 		self.version = 0
 		data = sstruct.pack(woff2GlyfTableFormat, self)
-		data += bytesjoin([getattr(self, s) for s in woff2GlyfSubStreams])
+		data += bytesjoin([getattr(self, s) for s in self.subStreams])
 		return data
 
 	def _decodeGlyph(self, glyphID):
