@@ -243,7 +243,7 @@ class WOFF2Writer(SFNTWriter):
 
 	def _calcSFNTChecksumsLengthsAndOffsets(self):
 		""" Compute the 'original' SFNT checksums, lengths and offsets for checksum
-		adjustment calculation. Return the total size of the uncompressed font.
+		adjustment calculation. Return the total size of the uncompressed font.
 		"""
 		offset = sfntDirectorySize + sfntDirectoryEntrySize * len(self.tables)
 		for tag in self.tableOrder:
