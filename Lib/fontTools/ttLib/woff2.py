@@ -111,24 +111,6 @@ class WOFF2Reader(SFNTReader):
 		return data
 
 
-def sortTagsByDependencies(tags):
-
-	def getDeps(tag):
-		tableClass = getTableClass(tag)
-		return tableClass.dependencies
-
-	result = tags[:]
-	for tag in tags:
-		for masterTable in getDeps(tag):
-			masterTableIndex = result.index(masterTable)
-			tagIndex = result.index(tag)
-			if masterTable in tags and masterTableIndex > tagIndex:
-				result.insert(tagIndex, result.pop(masterTableIndex))
-			else:
-				deps = sortTagsByDependencies([masterTable, tag])
-				result = deps + result
-
-
 class WOFF2Writer(SFNTWriter):
 
 	flavor = "woff2"
