@@ -116,6 +116,38 @@ class WOFF2ReaderTest(unittest.TestCase):
 			reader.reconstructTable('ZZZZ')
 
 
+class WOFF2ReaderTTFTest(WOFF2ReaderTest):
+	""" Tests specific to TT-flavored fonts. """
+
+	@classmethod
+	def setUpClass(cls):
+		cls.file = StringIO(TT_WOFF2.getvalue())
+		cls.font = ttLib.TTFont(recalcBBoxes=False, recalcTimestamp=False)
+		cls.font.importXML(TTX, quiet=True)
+
+	def setUp(self):
+		self.file.seek(0)
+
+	def test_reconstruct_glyf(self):
+		woff2Reader = WOFF2Reader(self.file)
+		reconstructedData = woff2Reader['glyf']
+		normGlyfData = normalise_table(self.font, 'glyf')
+		self.assertEqual(normGlyfData, reconstructedData)
+
+	def test_reconstruct_loca(self):
+		woff2Reader = WOFF2Reader(self.file)
+		reconstructedData = woff2Reader['loca']
+		normLocaData = normalise_table(self.font, 'loca')
+		self.assertEqual(normLocaData, reconstructedData)
+
+	def test_reconstruct_loca_not_match_orig_size(self):
+		reader = WOFF2Reader(self.file)
+		reader.tables['loca'].origLength -= 1
+		with self.assertRaisesRegexp(
+				ttLib.TTLibError, "'loca' table doesn't match original size"):
+			reader.reconstructTable('loca')
+
+
 def normalise_table(font, tag, padding=4):
 	""" Return normalised table data. Keep 'font' instance unmodified. """
 	assert tag in ('glyf', 'loca', 'head')
@@ -185,38 +217,6 @@ def normalise_font(font):
 	font.recalcTimestamp = origRecalcTimestamp
 	font.lazy = origLazy
 	return outfile.getvalue()
-
-
-class WOFF2ReaderTTFTest(unittest.TestCase):
-	""" Tests specific to TT-flavored fonts. """
-
-	@classmethod
-	def setUpClass(cls):
-		cls.file = StringIO(TT_WOFF2.getvalue())
-		cls.font = ttLib.TTFont(recalcBBoxes=False, recalcTimestamp=False)
-		cls.font.importXML(TTX, quiet=True)
-
-	def setUp(self):
-		self.file.seek(0)
-
-	def test_reconstruct_glyf(self):
-		woff2Reader = WOFF2Reader(self.file)
-		reconstructedData = woff2Reader['glyf']
-		normGlyfData = normalise_table(self.font, 'glyf')
-		self.assertEqual(normGlyfData, reconstructedData)
-
-	def test_reconstruct_loca(self):
-		woff2Reader = WOFF2Reader(self.file)
-		reconstructedData = woff2Reader['loca']
-		normLocaData = normalise_table(self.font, 'loca')
-		self.assertEqual(normLocaData, reconstructedData)
-
-	def test_reconstruct_loca_match_orig_size(self):
-		reader = WOFF2Reader(self.file)
-		reader.tables['loca'].origLength -= 1
-		with self.assertRaisesRegexp(
-				ttLib.TTLibError, "'loca' table doesn't match original size"):
-			reader.reconstructTable('loca')
 
 
 class WOFF2DirectoryEntryTest(unittest.TestCase):
