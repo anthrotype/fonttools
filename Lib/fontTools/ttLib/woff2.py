@@ -186,7 +186,8 @@ class WOFF2Writer(SFNTWriter):
 		# TODO(user): remove to match spec once browsers are on newer OTS
 		self.tableOrder.sort()
 
-		self._calcSFNTChecksumsLengthsAndOffsets()
+		self.totalSfntSize = self._calcSFNTChecksumsLengthsAndOffsets()
+
 		fontData = self._transformTables()
 		compressedFont = brotli.compress(fontData, mode=brotli.MODE_FONT)
 
@@ -199,6 +200,25 @@ class WOFF2Writer(SFNTWriter):
 		self.file.seek(0)
 		self.file.write(padData(directory + compressedFont))
 		self._writeFlavorData()
+
+	def _normaliseGlyfAndLoca(self):
+		""" If TrueType-flavoured, normalise glyph offsets to multiples of 4 bytes.
+		Also update the 'head' table's 'indexToLocFormat' while recompiling 'loca'.
+		"""
+		if self.sfntVersion == "OTTO":
+			return
+		for tag in ('maxp', 'head', 'loca', 'glyf'):
+			self._decompileTable(tag)
+		# re-compile glyf and loca using 4-byte padding
+		for tag in ('glyf', 'loca'):
+			self._compileTable(tag)
+
+	def _setHeadTransformFlag(self):
+		""" Set bit 11 of 'head' table flags to indicate that the font has undergone
+		a lossless modifying transform."""
+		self._decompileTable('head')
+		self.ttFont['head'].flags |= (1 << 11)
+		self._compileTable('head')
 
 	def _decompileTable(self, tag):
 		""" Fetch table data, decompile it, and store it inside self.ttFont. """
@@ -217,34 +237,13 @@ class WOFF2Writer(SFNTWriter):
 		table.decompile(data, self.ttFont)
 		self.ttFont[tag] = table
 
-	def _setHeadTransformFlag(self):
-		""" Set bit 11 of 'head' table flags to indicate that the font has undergone
-		a lossless modifying transform."""
-		self._decompileTable('head')
-		self.ttFont['head'].flags |= (1 << 11)
-		self.tables['head'].data = self.ttFont['head'].compile(self.ttFont)
-
-	def _normaliseGlyfAndLoca(self):
-		""" If TrueType-flavoured, normalise glyph offsets to multiples of 4 bytes.
-		Also update the 'head' table's 'indexToLocFormat' while recompiling 'loca'.
-		"""
-		if self.sfntVersion == "OTTO":
-			return
-		ttFont = self.ttFont
-		# decompile maxp, head, loca and glyf tables
-		for tag in ('maxp', 'head', 'loca', 'glyf'):
-			self._decompileTable(tag)
-		# re-compile glyf, loca and head (inverse order)
-		for tag in ('glyf', 'loca', 'head'):
-			if tag == 'glyf':
-				tableData = ttFont[tag].compile(ttFont, padding=4)
-			else:
-				tableData = ttFont[tag].compile(ttFont)
-			self.tables[tag].data = tableData
+	def _compileTable(self, tag):
+		""" Compile table and store it in its 'data' attribute. """
+		self.tables[tag].data = self.ttFont[tag].compile(self.ttFont)
 
 	def _calcSFNTChecksumsLengthsAndOffsets(self):
 		""" Compute the 'original' SFNT checksums, lengths and offsets for checksum
-		adjustment calculation, and the total size of the uncompressed font.
+		adjustment calculation. Return the total size of the uncompressed font.
 		"""
 		offset = sfntDirectorySize + sfntDirectoryEntrySize * len(self.tables)
 		for tag in self.tableOrder:
@@ -257,7 +256,7 @@ class WOFF2Writer(SFNTWriter):
 			else:
 				entry.checkSum = calcChecksum(data)
 			offset += (entry.origLength + 3) & ~3
-		self.totalSfntSize = offset
+		return offset
 
 	def _transformTables(self):
 		"""Return transformed font data."""
@@ -334,7 +333,7 @@ class WOFF2Writer(SFNTWriter):
 		return offset
 
 	def _calcFlavorDataOffsetsAndSize(self, start):
-		"""Calculate offsets and lengths for any metadata and/or private data."""
+		"""Calculate offsets and lengths for any meta- and/or private data."""
 		offset = start
 		data = self.flavorData
 		if data.metaData:
@@ -358,14 +357,14 @@ class WOFF2Writer(SFNTWriter):
 		return offset
 
 	def _getVersion(self):
-		"""Return (majorVersion, minorVersion) for WOFF2 font."""
+		"""Return the WOFF2 font's (majorVersion, minorVersion) tuple."""
 		data = self.flavorData
 		if data.majorVersion is not None and data.minorVersion is not None:
 			return data.majorVersion, data.minorVersion
 		else:
 			# if None, return 'fontRevision' from 'head' table
-			if hasattr(self, 'headTable'):
-				return struct.unpack(">HH", self.headTable[4:8])
+			if 'head' in self.tables:
+				return struct.unpack(">HH", self.tables['head'].data[4:8])
 			else:
 				return 0, 0
 
@@ -377,7 +376,7 @@ class WOFF2Writer(SFNTWriter):
 		return directory
 
 	def _writeFlavorData(self):
-		"""Write any WOFF2 metadata and/or private data using appropiate padding."""
+		"""Write metadata and/or private data using appropiate padding."""
 		compressedMetaData = self.compressedMetaData
 		privData = self.flavorData.privData
 		if compressedMetaData and privData:
@@ -570,10 +569,9 @@ class WOFF2GlyfTable(getTableClass('glyf')):
 			ttFont.setGlyphOrder(glyphOrder)
 		super(WOFF2GlyfTable, self).decompile(data, ttFont)
 
-	def compile(self, ttFont, padding=None):
+	def compile(self, ttFont, padding=4):
 		""" Adds a 'padding' keyword argument to optionally pad glyph offsets
-		to multiple of specified byte size (e.g. padding=4). Otherwise, same
-		as parent class' method.
+		to multiple of specified byte size. Otherwise, same as parent class' method.
 		"""
 		if not hasattr(self, "glyphOrder"):
 			self.glyphOrder = ttFont.getGlyphOrder()
