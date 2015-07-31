@@ -529,6 +529,71 @@ class WOFF2WriterTTFTest(WOFF2WriterTest):
 			self.assertEqual(self.writer.tables[tag].data, normTables[tag])
 
 
+class WOFF2LocaTableTest(unittest.TestCase):
+
+	def setUp(self):
+		self.font = font = ttLib.TTFont(
+			recalcBBoxes=False, recalcTimestamp=False)
+		font['head'] = ttLib.getTableClass('head')
+		font['loca'] = WOFF2LocaTable()
+		font['glyf'] = WOFF2GlyfTable()
+
+	def test_compile_short_loca(self):
+		font = self.font
+		locaTable = font['loca']
+		locaTable.set(list(range(0, 0x20000, 2)))
+		font['glyf'].indexFormat = 0
+		locaData = locaTable.compile(font)
+		self.assertEqual(len(locaData), 0x20000)
+
+	def test_compile_short_loca_overflow(self):
+		font = self.font
+		locaTable = font['loca']
+		locaTable.set(list(range(0x20000 + 1)))
+		font['glyf'].indexFormat = 0
+		with self.assertRaisesRegexp(
+				ttLib.TTLibError, "indexFormat is 0 but local offsets > 0x20000"):
+			locaTable.compile(font)
+
+	def test_compile_short_loca_not_multiples_of_2(self):
+		locaTable = self.font['loca']
+		locaTable.set([1, 3, 5, 7])
+		self.font['glyf'].indexFormat = 0
+		with self.assertRaisesRegexp(ttLib.TTLibError, "offsets not multiples of 2"):
+			locaTable.compile(self.font)
+
+	def test_compile_long_loca(self):
+		font = self.font
+		locaTable = font['loca']
+		locaTable.set(list(range(0x20001)))
+		font['glyf'].indexFormat = 1
+		locaData = locaTable.compile(font)
+		self.assertEqual(len(locaData), 0x20001 * 4)
+
+	def test_compile_set_indexToLocFormat_0(self):
+		font = self.font
+		locaTable = font['loca']
+		# offsets are all multiples of 2 and max length is < 0x10000
+		locaTable.set(list(range(0, 0x20000, 2)))
+		locaTable.compile(font)
+		newIndexFormat = font['head'].indexToLocFormat
+		self.assertEqual(0, newIndexFormat)
+
+	def test_compile_set_indexToLocFormat_1(self):
+		font = self.font
+		locaTable = font['loca']
+		# offsets are not multiples of 2
+		locaTable.set(list(range(10)))
+		locaTable.compile(font)
+		newIndexFormat = font['head'].indexToLocFormat
+		self.assertEqual(1, newIndexFormat)
+		# max length is >= 0x10000
+		locaTable.set(list(range(0, 0x20000 + 1, 2)))
+		locaTable.compile(font)
+		newIndexFormat = font['head'].indexToLocFormat
+		self.assertEqual(1, newIndexFormat)
+
+
 class WOFF2GlyfTableTest(unittest.TestCase):
 
 	@classmethod
@@ -555,9 +620,6 @@ class WOFF2GlyfTableTest(unittest.TestCase):
 		font.setGlyphOrder(self.glyphOrder)
 		for tag in self.transformedTags:
 			font[tag].decompile(self.tables[tag], font)
-
-	def tearDown(self):
-		del self.font
 
 	def test_reconstruct_glyf_padded(self):
 		glyfTable = WOFF2GlyfTable()
