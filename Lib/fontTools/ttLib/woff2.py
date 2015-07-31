@@ -633,11 +633,11 @@ class WOFF2GlyfTable(getTableClass('glyf')):
 		dummy, data = sstruct.unpack2(woff2GlyfTableFormat, data, self)
 		offset = woff2GlyfTableFormatSize
 
-		for streamName in woff2GlyfSubStreams:
-			streamSize = getattr(self, streamName + 'Size')
-			setattr(self, streamName, data[:streamSize])
-			data = data[streamSize:]
-			offset += streamSize
+		for stream in woff2GlyfSubStreams:
+			size = getattr(self, stream + 'Size')
+			setattr(self, stream, data[:size])
+			data = data[size:]
+			offset += size
 
 		if offset != inputDataSize:
 			raise TTLibError(
