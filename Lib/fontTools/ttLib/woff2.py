@@ -457,6 +457,10 @@ woff2GlyfTableFormat = """
 		instructionStreamSize:    L  # Size of instruction stream
 """
 
+woff2GlyfSubStreams = (
+	'nContourStream', 'nPointsStream', 'flagStream', 'glyphStream',
+	'compositeStream', 'bboxStream', 'instructionStream')
+
 woff2GlyfTableFormatSize = sstruct.calcsize(woff2GlyfTableFormat)
 
 bboxFormat = """
@@ -571,7 +575,7 @@ class WOFF2GlyfTable(getTableClass('glyf')):
 
 	def compile(self, ttFont, padding=4):
 		""" Adds a 'padding' keyword argument to optionally pad glyph offsets
-		to multiple of specified byte size. Otherwise, same as parent class' method.
+		to multiple of specified byte size (default 4). Otherwise, same as parent.
 		"""
 		if not hasattr(self, "glyphOrder"):
 			self.glyphOrder = ttFont.getGlyphOrder()
@@ -619,33 +623,11 @@ class WOFF2GlyfTable(getTableClass('glyf')):
 		dummy, data = sstruct.unpack2(woff2GlyfTableFormat, data, self)
 		substreamOffset = woff2GlyfTableFormatSize
 
-		self.nContourStream = data[:self.nContourStreamSize]
-		data = data[self.nContourStreamSize:]
-		substreamOffset += self.nContourStreamSize
-
-		self.nPointsStream = data[:self.nPointsStreamSize]
-		data = data[self.nPointsStreamSize:]
-		substreamOffset += self.nPointsStreamSize
-
-		self.flagStream = data[:self.flagStreamSize]
-		data = data[self.flagStreamSize:]
-		substreamOffset += self.flagStreamSize
-
-		self.glyphStream = data[:self.glyphStreamSize]
-		data = data[self.glyphStreamSize:]
-		substreamOffset += self.glyphStreamSize
-
-		self.compositeStream = data[:self.compositeStreamSize]
-		data = data[self.compositeStreamSize:]
-		substreamOffset += self.compositeStreamSize
-
-		combinedBboxStream = data[:self.bboxStreamSize]
-		data = data[self.bboxStreamSize:]
-		substreamOffset += self.bboxStreamSize
-
-		self.instructionStream = data[:self.instructionStreamSize]
-		data = data[self.instructionStreamSize:]
-		substreamOffset += self.instructionStreamSize
+		for streamName in woff2GlyfSubStreams:
+			streamSize = getattr(self, streamName + 'Size')
+			setattr(self, streamName, data[:streamSize])
+			data = data[streamSize:]
+			substreamOffset += streamSize
 
 		if substreamOffset != inputDataSize:
 			raise TTLibError(
@@ -653,9 +635,9 @@ class WOFF2GlyfTable(getTableClass('glyf')):
 				% (substreamOffset, inputDataSize))
 
 		bboxBitmapSize = ((self.numGlyphs + 31) >> 5) << 2
-		bboxBitmap = combinedBboxStream[:bboxBitmapSize]
+		bboxBitmap = self.bboxStream[:bboxBitmapSize]
 		self.bboxBitmap = array.array('B', bboxBitmap)
-		self.bboxStream = combinedBboxStream[bboxBitmapSize:]
+		self.bboxStream = self.bboxStream[bboxBitmapSize:]
 
 		self.nContourStream = array.array("h", self.nContourStream)
 		if sys.byteorder != "big":
