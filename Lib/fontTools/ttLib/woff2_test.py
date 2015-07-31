@@ -452,7 +452,7 @@ class WOFF2WriterTest(unittest.TestCase):
 		self.assertEqual(expected, self.writer.length)
 		self.assertEqual(expected, self.writer.file.tell())
 
-	def test_calcTotalSize_metaData(self):
+	def test_calcTotalSize_with_metaData(self):
 		expected = self.length + len(self.compressed_metadata)
 		flavorData = self.writer.flavorData = WOFF2FlavorData()
 		flavorData.metaData = self.xml_metadata
@@ -463,7 +463,7 @@ class WOFF2WriterTest(unittest.TestCase):
 		self.assertEqual(expected, self.writer.length)
 		self.assertEqual(expected, self.writer.file.tell())
 
-	def test_calcTotalSize_privData(self):
+	def test_calcTotalSize_with_privData(self):
 		expected = self.length + len(self.privData)
 		flavorData = self.writer.flavorData = WOFF2FlavorData()
 		flavorData.privData = self.privData
@@ -474,7 +474,7 @@ class WOFF2WriterTest(unittest.TestCase):
 		self.assertEqual(expected, self.writer.length)
 		self.assertEqual(expected, self.writer.file.tell())
 
-	def test_calcTotalSize_metaData_and_privData(self):
+	def test_calcTotalSize_with_metaData_and_privData(self):
 		metaDataLength = (len(self.compressed_metadata) + 3) & ~3
 		expected = self.length + metaDataLength + len(self.privData)
 		flavorData = self.writer.flavorData = WOFF2FlavorData()
@@ -488,14 +488,15 @@ class WOFF2WriterTest(unittest.TestCase):
 		self.assertEqual(expected, self.writer.file.tell())
 
 	def test_getVersion(self):
+		# no version
 		self.assertEqual((0, 0), self.writer._getVersion())
-
+		# version from head.fontRevision
 		fontRevision = self.font['head'].fontRevision
 		versionTuple = tuple(int(i) for i in str(fontRevision).split("."))
 		entry = self.writer.tables['head'] = ttLib.getTableClass('head')()
 		entry.data = self.font.getTableData('head')
 		self.assertEqual(versionTuple, self.writer._getVersion())
-
+		# version from writer.flavorData
 		flavorData = self.writer.flavorData = WOFF2FlavorData()
 		flavorData.majorVersion, flavorData.minorVersion = (10, 11)
 		self.assertEqual((10, 11), self.writer._getVersion())
@@ -532,28 +533,25 @@ class WOFF2WriterTTFTest(WOFF2WriterTest):
 class WOFF2LocaTableTest(unittest.TestCase):
 
 	def setUp(self):
-		self.font = font = ttLib.TTFont(
-			recalcBBoxes=False, recalcTimestamp=False)
+		self.font = font = ttLib.TTFont(recalcBBoxes=False, recalcTimestamp=False)
 		font['head'] = ttLib.getTableClass('head')
 		font['loca'] = WOFF2LocaTable()
 		font['glyf'] = WOFF2GlyfTable()
 
 	def test_compile_short_loca(self):
-		font = self.font
-		locaTable = font['loca']
+		locaTable = self.font['loca']
 		locaTable.set(list(range(0, 0x20000, 2)))
-		font['glyf'].indexFormat = 0
-		locaData = locaTable.compile(font)
+		self.font['glyf'].indexFormat = 0
+		locaData = locaTable.compile(self.font)
 		self.assertEqual(len(locaData), 0x20000)
 
 	def test_compile_short_loca_overflow(self):
-		font = self.font
-		locaTable = font['loca']
+		locaTable = self.font['loca']
 		locaTable.set(list(range(0x20000 + 1)))
-		font['glyf'].indexFormat = 0
+		self.font['glyf'].indexFormat = 0
 		with self.assertRaisesRegexp(
 				ttLib.TTLibError, "indexFormat is 0 but local offsets > 0x20000"):
-			locaTable.compile(font)
+			locaTable.compile(self.font)
 
 	def test_compile_short_loca_not_multiples_of_2(self):
 		locaTable = self.font['loca']
@@ -563,34 +561,31 @@ class WOFF2LocaTableTest(unittest.TestCase):
 			locaTable.compile(self.font)
 
 	def test_compile_long_loca(self):
-		font = self.font
-		locaTable = font['loca']
+		locaTable = self.font['loca']
 		locaTable.set(list(range(0x20001)))
-		font['glyf'].indexFormat = 1
-		locaData = locaTable.compile(font)
+		self.font['glyf'].indexFormat = 1
+		locaData = locaTable.compile(self.font)
 		self.assertEqual(len(locaData), 0x20001 * 4)
 
 	def test_compile_set_indexToLocFormat_0(self):
-		font = self.font
-		locaTable = font['loca']
+		locaTable = self.font['loca']
 		# offsets are all multiples of 2 and max length is < 0x10000
 		locaTable.set(list(range(0, 0x20000, 2)))
-		locaTable.compile(font)
-		newIndexFormat = font['head'].indexToLocFormat
+		locaTable.compile(self.font)
+		newIndexFormat = self.font['head'].indexToLocFormat
 		self.assertEqual(0, newIndexFormat)
 
 	def test_compile_set_indexToLocFormat_1(self):
-		font = self.font
-		locaTable = font['loca']
+		locaTable = self.font['loca']
 		# offsets are not multiples of 2
 		locaTable.set(list(range(10)))
-		locaTable.compile(font)
-		newIndexFormat = font['head'].indexToLocFormat
+		locaTable.compile(self.font)
+		newIndexFormat = self.font['head'].indexToLocFormat
 		self.assertEqual(1, newIndexFormat)
 		# max length is >= 0x10000
 		locaTable.set(list(range(0, 0x20000 + 1, 2)))
-		locaTable.compile(font)
-		newIndexFormat = font['head'].indexToLocFormat
+		locaTable.compile(self.font)
+		newIndexFormat = self.font['head'].indexToLocFormat
 		self.assertEqual(1, newIndexFormat)
 
 
@@ -602,7 +597,7 @@ class WOFF2GlyfTableTest(unittest.TestCase):
 		font.importXML(TTX, quiet=True)
 		cls.tables = {}
 		cls.transformedTags = ('maxp', 'head', 'loca', 'glyf')
-		for tag in reversed(cls.transformedTags):
+		for tag in reversed(cls.transformedTags):  # compile in inverse order
 			cls.tables[tag] = font.getTableData(tag)
 		cls.glyphOrder = ["glyph%d" % i for i in range(font['maxp'].numGlyphs)]
 		infile = StringIO(TT_WOFF2.getvalue())
@@ -611,8 +606,7 @@ class WOFF2GlyfTableTest(unittest.TestCase):
 			reader.transformBuffer)
 
 	def setUp(self):
-		self.font = font = ttLib.TTFont(
-			recalcBBoxes=False, recalcTimestamp=False)
+		self.font = font = ttLib.TTFont(recalcBBoxes=False, recalcTimestamp=False)
 		font['head'] = ttLib.getTableClass('head')()
 		font['maxp'] = ttLib.getTableClass('maxp')()
 		font['loca'] = WOFF2LocaTable()
@@ -704,13 +698,13 @@ class WOFF2GlyfTableTest(unittest.TestCase):
 		expected = ["glyph%d" % i for i in range(numGlyphs)]
 		self.assertEqual(expected, glyfTable.glyphOrder)
 
-	def test_roundtrip_glyf_1(self):
+	def test_roundtrip_glyf_reconstruct_and_transform(self):
 		glyfTable = WOFF2GlyfTable()
 		glyfTable.reconstruct(self.transformedGlyfData, self.font)
 		data = glyfTable.transform(self.font)
 		self.assertEqual(self.transformedGlyfData, data)
 
-	def test_roundtrip_glyf_2(self):
+	def test_roundtrip_glyf_transform_and_reconstruct(self):
 		glyfTable = self.font['glyf']
 		transformedData = glyfTable.transform(self.font)
 		newGlyfTable = WOFF2GlyfTable()
