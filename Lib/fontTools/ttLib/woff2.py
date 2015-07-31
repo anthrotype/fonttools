@@ -457,11 +457,11 @@ woff2GlyfTableFormat = """
 		instructionStreamSize:    L  # Size of instruction stream
 """
 
+woff2GlyfTableFormatSize = sstruct.calcsize(woff2GlyfTableFormat)
+
 woff2GlyfSubStreams = (
 	'nContourStream', 'nPointsStream', 'flagStream', 'glyphStream',
 	'compositeStream', 'bboxStream', 'instructionStream')
-
-woff2GlyfTableFormatSize = sstruct.calcsize(woff2GlyfTableFormat)
 
 bboxFormat = """
 		>	# big endian
