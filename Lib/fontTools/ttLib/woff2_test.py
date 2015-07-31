@@ -487,6 +487,19 @@ class WOFF2WriterTest(unittest.TestCase):
 		self.assertEqual(expected, self.writer.length)
 		self.assertEqual(expected, self.writer.file.tell())
 
+	def test_getVersion(self):
+		self.assertEqual((0, 0), self.writer._getVersion())
+
+		fontRevision = self.font['head'].fontRevision
+		versionTuple = tuple(int(i) for i in str(fontRevision).split("."))
+		entry = self.writer.tables['head'] = ttLib.getTableClass('head')()
+		entry.data = self.font.getTableData('head')
+		self.assertEqual(versionTuple, self.writer._getVersion())
+
+		flavorData = self.writer.flavorData = WOFF2FlavorData()
+		flavorData.majorVersion, flavorData.minorVersion = (10, 11)
+		self.assertEqual((10, 11), self.writer._getVersion())
+
 
 class WOFF2WriterTTFTest(WOFF2WriterTest):
 
@@ -556,7 +569,7 @@ class WOFF2GlyfTableTest(unittest.TestCase):
 	def test_reconstruct_glyf_unpadded(self):
 		glyfTable = WOFF2GlyfTable()
 		glyfTable.reconstruct(self.transformedGlyfData, self.font)
-		data = glyfTable.compile(self.font)
+		data = glyfTable.compile(self.font, padding=None)
 		self.assertEqual(self.tables['glyf'], data)
 
 	def test_reconstruct_glyf_incorrect_glyphOrder(self):
@@ -588,7 +601,7 @@ class WOFF2GlyfTableTest(unittest.TestCase):
 		locaTable = self.font['loca'] = WOFF2LocaTable()
 		glyfTable = self.font['glyf'] = WOFF2GlyfTable()
 		glyfTable.reconstruct(self.transformedGlyfData, self.font)
-		glyfTable.compile(self.font)
+		glyfTable.compile(self.font, padding=None)
 		data = locaTable.compile(self.font)
 		self.assertEqual(self.tables['loca'], data)
 
