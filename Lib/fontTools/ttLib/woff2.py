@@ -631,18 +631,18 @@ class WOFF2GlyfTable(getTableClass('glyf')):
 		if inputDataSize < woff2GlyfTableFormatSize:
 			raise TTLibError("not enough 'glyf' data")
 		dummy, data = sstruct.unpack2(woff2GlyfTableFormat, data, self)
-		substreamOffset = woff2GlyfTableFormatSize
+		offset = woff2GlyfTableFormatSize
 
 		for streamName in woff2GlyfSubStreams:
 			streamSize = getattr(self, streamName + 'Size')
 			setattr(self, streamName, data[:streamSize])
 			data = data[streamSize:]
-			substreamOffset += streamSize
+			offset += streamSize
 
-		if substreamOffset != inputDataSize:
+		if offset != inputDataSize:
 			raise TTLibError(
 				"incorrect size of transformed 'glyf' table: expected %d, received %d bytes"
-				% (substreamOffset, inputDataSize))
+				% (offset, inputDataSize))
 
 		bboxBitmapSize = ((self.numGlyphs + 31) >> 5) << 2
 		bboxBitmap = self.bboxStream[:bboxBitmapSize]
