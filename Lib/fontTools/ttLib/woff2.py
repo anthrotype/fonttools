@@ -687,17 +687,13 @@ class WOFF2GlyfTable(getTableClass('glyf')):
 			raise TTLibError(
 				"incorrect glyphOrder: expected %d glyphs, found %d" %
 				(len(self.glyphOrder), self.numGlyphs))
+
 		if 'maxp' in ttFont:
 			ttFont['maxp'].numGlyphs = self.numGlyphs
 		self.indexFormat = ttFont['head'].indexToLocFormat
 
-		self.nContourStream = b""
-		self.nPointsStream = b""
-		self.flagStream = b""
-		self.glyphStream = b""
-		self.compositeStream = b""
-		self.bboxStream = b""
-		self.instructionStream = b""
+		for stream in woff2GlyfSubStreams:
+			setattr(self, stream, b"")
 		bboxBitmapSize = ((self.numGlyphs + 31) >> 5) << 2
 		self.bboxBitmap = array.array('B', [0]*bboxBitmapSize)
 
@@ -705,24 +701,12 @@ class WOFF2GlyfTable(getTableClass('glyf')):
 			self._encodeGlyph(glyphID)
 
 		self.bboxStream = self.bboxBitmap.tostring() + self.bboxStream
-
+		for stream in woff2GlyfSubStreams:
+			setattr(self, stream + 'Size', len(getattr(self, stream)))
 		self.version = 0
-
-		self.nContourStreamSize = len(self.nContourStream)
-		self.nPointsStreamSize = len(self.nPointsStream)
-		self.flagStreamSize = len(self.flagStream)
-		self.glyphStreamSize = len(self.glyphStream)
-		self.compositeStreamSize = len(self.compositeStream)
-		self.bboxStreamSize = len(self.bboxStream)
-		self.instructionStreamSize = len(self.instructionStream)
-
-		header = sstruct.pack(woff2GlyfTableFormat, self)
-
-		transfomedGlyfData = bytesjoin([
-			header, self.nContourStream, self.nPointsStream, self.flagStream,
-			self.glyphStream, self.compositeStream, self.bboxStream,
-			self.instructionStream])
-		return transfomedGlyfData
+		data = sstruct.pack(woff2GlyfTableFormat, self)
+		data += bytesjoin([getattr(self, s) for s in woff2GlyfSubStreams])
+		return data
 
 	def _decodeGlyph(self, glyphID):
 		glyph = getTableModule('glyf').Glyph()
