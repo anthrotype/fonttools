@@ -719,6 +719,14 @@ class WOFF2GlyfTableTest(unittest.TestCase):
 		normGlyfData = normalise_table(self.font, 'glyf')
 		self.assertEqual(normGlyfData, reconstructedData)
 
+	def test_decompile_glyf_missing_glyphOrder(self):
+		glyfTable = WOFF2GlyfTable()
+		del self.font.glyphOrder
+		del self.font['maxp']
+		del self.font['loca']
+		with self.assertRaisesRegexp(ttLib.TTLibError, "undefined glyph number"):
+			glyfTable.decompile(self.tables['glyf'], self.font)
+
 
 if __name__ == "__main__":
 	unittest.main()
