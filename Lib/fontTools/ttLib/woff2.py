@@ -568,8 +568,19 @@ class WOFF2GlyfTable(getTableClass('glyf')):
 
 	def decompile(self, data, ttFont):
 		"""Set dummy glyph order based on glyph IDs before decompiling."""
-		if not hasattr(ttFont, 'glyphOrder'):
-			glyphOrder = ["glyph%d" % i for i in range(ttFont['maxp'].numGlyphs)]
+
+		try:
+			glyphOrder = ttFont.getGlyphOrder()
+		except:
+			glyphOrder = None
+		if glyphOrder is None:
+			if 'maxp' in ttFont and hasattr(ttFont['maxp'], 'numGlyphs'):
+				numGlyphs = ttFont['maxp'].numGlyphs
+			elif 'loca' in ttFont and hasattr(ttFont['loca'], 'locations'):
+				numGlyphs = len(ttFont['loca']) - 1
+			else:
+				raise TTLibError("can't decompile 'glyf': undefined glyph number")
+			glyphOrder = ["glyph%d" % i for i in range(numGlyphs)]
 			ttFont.setGlyphOrder(glyphOrder)
 		super(WOFF2GlyfTable, self).decompile(data, ttFont)
 
