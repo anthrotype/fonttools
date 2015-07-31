@@ -512,7 +512,7 @@ class WOFF2DirectoryEntry(DirectoryEntry):
 
 	def toString(self):
 		data = bytechr(self.flags)
-		if (self.flags & 0x3f) == 0x3f:
+		if (self.flags & 0x3F) == 0x3F:
 			data += struct.pack('>4s', self.tag.tobytes())
 		data += packBase128(self.origLength)
 		if self.tag in woff2TransformedTableTags:
@@ -522,7 +522,7 @@ class WOFF2DirectoryEntry(DirectoryEntry):
 
 class WOFF2LocaTable(getTableClass('loca')):
 	"""Same as parent class. The only difference is that it attempts to preserve
-	the 'indexFormat' as encoded in WOFF2 glyf table.
+	the 'indexFormat' as encoded in the WOFF2 glyf table.
 	"""
 
 	def __init__(self, tag=None):
@@ -535,7 +535,7 @@ class WOFF2LocaTable(getTableClass('loca')):
 			self.set([])
 			max_location = 0
 		if 'glyf' in ttFont and hasattr(ttFont['glyf'], 'indexFormat'):
-			# copile loca using the indexFormat speficied in the WOFF2 glyf table
+			# copile loca using the indexFormat specified in the WOFF2 glyf table
 			indexFormat = ttFont['glyf'].indexFormat
 			if indexFormat == 0:
 				if max_location >= 0x20000:
