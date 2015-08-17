@@ -156,6 +156,131 @@ else:
 		return tobytes(joiner).join(tobytes(item) for item in iterable)
 
 
+
+import os
+try:
+	from msvcrt import setmode as _setmode
+except ImportError:
+	_setmode = None
+import io as _io
+
+
+def open(file, mode='r', buffering=-1, encoding=None, errors=None,
+		newline=None, closefd=True, opener=None):
+	""" Alias of py3 built-in 'open' function, backported to py2 as 'io.open'.
+	The 'opener' keyword argument is disabled for backward compatibility.
+	"""
+	if opener is not None:
+		raise TypeError("'opener' keyword argument is not supported in py2")
+	return _io.open(file, mode, buffering, encoding, errors, newline, closefd)
+
+
+from contextlib import contextmanager as _contextmanager
+
+@_contextmanager
+def _open_stdio(name, binary=False, buffering=-1, encoding=None, errors=None,
+		newline=None):
+	if name not in ('stdin', 'stdout', 'stderr'):
+		raise ValueError('invalid standard I/O stream: %s' % name)
+	if name == 'stdin':
+		mode = 'rb' if binary else 'r'
+	else:
+		mode = 'wb' if binary else 'w'
+	newline_flag = None
+	stream = getattr(sys, name)
+	fd = stream.fileno()
+	stream.flush()
+	if _setmode:
+		# disable newlines translation ('\r\n' <=> '\n') on win32
+		newline_flag = _setmode(fd, os.O_BINARY)
+	try:
+		with open(fd, mode, buffering, encoding, errors, newline,
+				closefd=False) as new_stream:
+			yield new_stream
+	finally:
+		if newline_flag:
+			# restore original newline translation mode
+			_setmode(fd, newline_flag)
+
+
+def open_stdin(mode='r', buffering=-1, encoding=None, errors=None, newline=None):
+	"""Context manager yielding a file-like object that wraps around the
+	standard input stream 'sys.stdin'. When the caller returns, the object is
+	closed and standard stream is restored to its original state.
+
+	Keyword Arguments:
+ 		- mode -- A string indicating how the stream is to be opened, similar
+ 			to the builtin open() function. Accepts either 'r'/'rt' or 'rb'.
+ 		- buffering -- The file's desired buffer size. Accepts the same values as
+			the builtin open() function.
+		- encoding -- The file's encoding. Accepts the same values as the
+			builtin open() function. It only applies to text mode.
+		- errors -- A string indicating how encoding and decoding errors are to
+			be handled. Accepts the same value as the builtin open() function.
+			It only applies to text mode.
+		- newline -- A string controlling how universal newline mode works.
+			Accepts the same value as the builtin open() function. It only
+			applies to text mode.
+	"""
+	valid_modes = ({'r'}, {'r', 'b'}, {'r', 't'})
+	if not (1 <= len(mode) <= 2 and any(v == set(mode) for v in valid_modes)):
+		raise ValueError("invalid mode %r for stdin" % mode)
+	binary = 'b' in mode
+	return _open_stdio('stdin', binary, buffering, encoding, errors, newline)
+
+
+def open_stdout(mode='w', buffering=-1, encoding=None, errors=None, newline=None):
+	"""Context manager yielding a file-like object that wraps around the
+	standard output stream 'sys.stdout'. When the caller returns, the object is
+	closed and standard stream is restored to its original state.
+
+	Keyword Arguments:
+ 		- mode -- A string indicating how the stream is to be opened, similar
+ 			to the builtin open() function. Accepts either 'w'/'wt' or 'wb'.
+ 		- buffering -- The file's desired buffer size. Accepts the same values as
+			the builtin open() function.
+		- encoding -- The file's encoding. Accepts the same values as the
+			builtin open() function. It only applies to text mode.
+		- errors -- A string indicating how encoding and decoding errors are to
+			be handled. Accepts the same value as the builtin open() function.
+			It only applies to text mode.
+		- newline -- A string controlling how universal newline mode works.
+			Accepts the same value as the builtin open() function. It only
+			applies to text mode.
+	"""
+	valid_modes = ({'w'}, {'w', 'b'}, {'w', 't'})
+	if not (1 <= len(mode) <= 2 and any(v == set(mode) for v in valid_modes)):
+		raise ValueError("invalid mode %r for stdout" % mode)
+	binary = 'b' in mode
+	return _open_stdio('stdout', binary, buffering, encoding, errors, newline)
+
+
+def open_stderr(mode='w', buffering=-1, encoding=None, errors=None, newline=None):
+	"""Context manager yielding a file-like object that wraps around the
+	standard error stream 'sys.stderr'. When the caller returns, the object is
+	closed and standard stream is restored to its original state.
+
+	Keyword Arguments:
+ 		- mode -- A string indicating how the stream is to be opened, similar
+ 			to the builtin open() function. Accepts either 'w'/'wt' or 'wb'.
+ 		- buffering -- The file's desired buffer size. Accepts the same values as
+			the builtin open() function.
+		- encoding -- The file's encoding. Accepts the same values as the
+			builtin open() function. It only applies to text mode.
+		- errors -- A string indicating how encoding and decoding errors are to
+			be handled. Accepts the same value as the builtin open() function.
+			It only applies to text mode.
+		- newline -- A string controlling how universal newline mode works.
+			Accepts the same value as the builtin open() function. It only
+			applies to text mode.
+	"""
+	valid_modes = ({'w'}, {'w', 'b'}, {'w', 't'})
+	if not (1 <= len(mode) <= 2 and any(v == set(mode) for v in valid_modes)):
+		raise ValueError("invalid mode %r for stderr" % mode)
+	binary = 'b' in mode
+	return _open_stdio('stderr', binary, buffering, encoding, errors, newline)
+
+
 if __name__ == "__main__":
 	import doctest, sys
 	sys.exit(doctest.testmod().failed)
