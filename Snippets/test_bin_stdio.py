@@ -32,11 +32,8 @@ def main():
                 check_call([PYTHON, SCRIPT], stdin=infile, stdout=outfile)
         result = diff_q(infile.name, outfile.name)
     finally:
-        try:
-            if result == 0:
-                os.remove(outfile.name)
-        except:
-            pass
+        if result == 0:
+            os.remove(outfile.name)
     if result != 0:
         sys.exit(1)
 
