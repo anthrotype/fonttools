@@ -45,56 +45,16 @@ class PSTokenizer(object):
 		buf = tobytes(buf)
 		self.buf = buf
 		self.len = len(buf)
-		self.buflist = []
 		self.pos = 0
 		self.closed = False
-		self.softspace = 0
-
-	def _complain_ifclosed(self):
-		if self.closed:
-			raise ValueError("I/O operation on closed file")
-
-	def close(self):
-		"""Free the memory buffer.
-		"""
-		if not self.closed:
-			self.closed = True
-			del self.buf, self.pos
-
-	def seek(self, pos, mode=0):
-		"""Set the file's current position.
-
-		The mode argument is optional and defaults to 0 (absolute file
-		positioning); other values are 1 (seek relative to the current
-		position) and 2 (seek relative to the file's end).
-		"""
-		self._complain_ifclosed()
-		if self.buflist:
-			self.buf += b''.join(self.buflist)
-			self.buflist = []
-		if mode == 1:
-			pos += self.pos
-		elif mode == 2:
-			pos += self.len
-		self.pos = max(0, pos)
-
-	def tell(self):
-		"""Return the file's current position."""
-		self._complain_ifclosed()
-		return self.pos
 
 	def read(self, n=-1):
-		"""Read at most size bytes from the file
-		(less if the read hits EOF before obtaining size bytes).
-
-		If the size argument is negative or omitted, read all data until EOF
-		is reached. The bytes are returned as a byte string object. An empty
-		string is returned when EOF is encountered immediately.
+		"""Read at most 'n' bytes from the stream, or less if the read
+		hits EOF before obtaining 'n' bytes.
+		If 'n' is negative or omitted, read all data until EOF is reached.
 		"""
-		self._complain_ifclosed()
-		if self.buflist:
-			self.buf += b''.join(self.buflist)
-			self.buflist = []
+		if self.closed:
+			raise ValueError("I/O operation on closed file")
 		if n is None or n < 0:
 			newpos = self.len
 		else:
@@ -102,6 +62,11 @@ class PSTokenizer(object):
 		r = self.buf[self.pos:newpos]
 		self.pos = newpos
 		return r
+
+	def close(self):
+		if not self.closed:
+			self.closed = True
+			del self.buf, self.pos
 
 	def getnexttoken(self,
 			# localize some stuff, for performance
@@ -175,12 +140,6 @@ class PSTokenizer(object):
 			return
 		self.buf = self.dirtybuf
 		del self.dirtybuf
-
-	def flush(self):
-		self._complain_ifclosed()
-		if self.buflist:
-			self.buf = self.buf + "".join(self.buflist)
-			self.buflist = []
 
 
 class PSInterpreter(PSOperators):
