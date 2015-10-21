@@ -8,9 +8,9 @@ from string import whitespace
 
 
 ps_special = b'()<>[]{}%'	# / is one too, but we take care of that one differently
-whitespace = tobytes(whitespace)
-skipwhiteRE = re.compile(b"[" + whitespace + b"]*")
-endofthingPat = b"[^][(){}<>/%%" + whitespace + b"]*"
+
+skipwhiteRE = re.compile(bytesjoin([b"[", whitespace, b"]*"]))
+endofthingPat = bytesjoin([b"[^][(){}<>/%", whitespace, b"]*"])
 endofthingRE = re.compile(endofthingPat)
 commentRE = re.compile(b"%[^\n\r]*")
 
@@ -32,7 +32,7 @@ stringPat = br"""
 stringPat = b"".join(stringPat.split())
 stringRE = re.compile(stringPat)
 
-hexstringRE = re.compile(b"<[" + whitespace + b"0-9A-Fa-f]*>")
+hexstringRE = re.compile(bytesjoin([b"<[", whitespace, b"0-9A-Fa-f]*>"]))
 
 class PSTokenError(Exception): pass
 class PSError(Exception): pass
