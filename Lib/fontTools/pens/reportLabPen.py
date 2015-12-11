@@ -1,7 +1,6 @@
 from __future__ import print_function, division, absolute_import
 from fontTools.misc.py23 import *
 from fontTools.pens.basePen import BasePen
-from reportlab.graphics.shapes import Path
 
 
 class ReportLabPen(BasePen):
@@ -9,6 +8,7 @@ class ReportLabPen(BasePen):
 	"""A pen for drawing onto a reportlab.graphics.shapes.Path object."""
 
 	def __init__(self, glyphSet, path=None):
+		from reportlab.graphics.shapes import Path
 		BasePen.__init__(self, glyphSet)
 		if path is None:
 			path = Path()
@@ -34,6 +34,8 @@ class ReportLabPen(BasePen):
 
 if __name__=="__main__":
 	import sys
+	from reportlab.graphics.shapes import Path
+
 	if len(sys.argv) < 3:
 		print("Usage: reportLabPen.py <OTF/TTF font> <glyphname> [<image file to create>]")
 		print("  If no image file name is created, by default <glyphname>.png is created.")
