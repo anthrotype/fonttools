@@ -226,6 +226,7 @@ def ttDump(input, output, options):
 		print('Dumping "%s" to "%s"...' % (input, output))
 	if options.unicodedata:
 		setUnicodeData(options.unicodedata)
+
 	ttf = TTFont(input, 0, verbose=options.verbose, allowVID=options.allowVID,
 			quiet=options.quiet,
 			ignoreDecompileErrors=options.ignoreDecompileErrors,
@@ -252,7 +253,11 @@ def ttCompile(input, output, options):
 	if not options.recalcTimestamp:
 		# use TTX file modification time for head "modified" timestamp
 		mtime = os.path.getmtime(input)
-		ttf['head'].modified = timestampSinceEpoch(mtime)
+		if ttf.isCollection():
+			for font in ttf.fonts:
+				font['head'].modified = timestampSinceEpoch(mtime)
+		else:
+			ttf['head'].modified = timestampSinceEpoch(mtime)
 
 	ttf.save(output)
 
@@ -366,6 +371,7 @@ def main(args=None):
 			raise
 	except TTLibError as e:
 		print("Error:",e)
+		sys.exit(1)
 	except:
 		if sys.platform == "win32":
 			import traceback
