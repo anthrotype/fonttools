@@ -14,6 +14,7 @@ if [[ "$(uname -s)" == 'Darwin' ]]; then
 
     case "${TOXENV}" in
         py27)
+            python -c "import platform; print platform.mac_ver()"
             curl -O https://bootstrap.pypa.io/get-pip.py
             python get-pip.py --user
             ;;
