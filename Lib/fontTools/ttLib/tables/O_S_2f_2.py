@@ -228,3 +228,56 @@ class table_O_S_2f_2(DefaultTable.DefaultTable):
 	@fsLastCharIndex.setter
 	def fsLastCharIndex(self, value):
 		self.usLastCharIndex = value
+
+	def getUnicodeRanges(self):
+		""" Return the set of 'ulUnicodeRange*' bits currently enabled. """
+		bits = set()
+		ul1, ul2 = self.ulUnicodeRange1, self.ulUnicodeRange2
+		ul3, ul4 = self.ulUnicodeRange3, self.ulUnicodeRange4
+		for i in range(32):
+			if ul1 & (1 << i):
+				bits.add(i)
+			if ul2 & (1 << i):
+				bits.add(i + 32)
+			if ul3 & (1 << i):
+				bits.add(i + 64)
+			if ul4 & (1 << i):
+				bits.add(i + 96)
+		return bits
+
+	def setUnicodeRanges(self, bits):
+		""" Set the 'ulUnicodeRange*' fields to the specified 'bits'. """
+		ul1, ul2, ul3, ul4 = 0, 0, 0, 0
+		for bit in bits:
+			if 0 <= bit < 32:
+				ul1 |= (1 << bit)
+			elif 32 <= bit < 64:
+				ul2 |= (1 << (bit - 32))
+			elif 64 <= bit < 96:
+				ul3 |= (1 << (bit - 64))
+			elif 96 <= bit < 123:
+				ul4 |= (1 << (bit - 96))
+			else:
+				raise ValueError('expected 0 <= int <= 122, found: %r' % bit)
+		self.ulUnicodeRange1, self.ulUnicodeRange2 = ul1, ul2
+		self.ulUnicodeRange3, self.ulUnicodeRange4 = ul3, ul4
+
+	def recalcUnicodeRanges(self, ttFont, pruneOnly=False):
+		""" Intersect the codepoints in the font's Unicode cmap subtables with
+		the Unicode block ranges defined in the OpenType specification (v1.7),
+		and set the respective 'ulUnicodeRange*' bits if there is at least ONE
+		intersection.
+		If 'pruneOnly' is True, only clear unused bits with NO intersection.
+		"""
+		from . import unicodeRanges
+		unicodes = set()
+		for table in ttFont['cmap'].tables:
+			if table.isUnicode():
+				unicodes.update(table.cmap.keys())
+		if pruneOnly:
+			empty = unicodeRanges.intersect(unicodes, inverse=True)
+			bits = self.getUnicodeRanges() - empty
+		else:
+			bits = unicodeRanges.intersect(unicodes)
+		self.setUnicodeRanges(bits)
+		return bits
