@@ -106,14 +106,16 @@ class WOFFFlavorData(object):
         return zlib.compress(data)
 
 
-class WOFFReader(SFNTReader):
-
+class WOFFMixin(object):
     flavor = "woff"
     signature = b"wOFF"
     FlavorData = WOFFFlavorData
     directoryFormat = woffDirectoryFormat
     directorySize = woffDirectorySize
     DirectoryEntry = WOFFDirectoryEntry
+
+
+class WOFFReader(WOFFMixin, SFNTReader):
 
     def __init__(self, file, checkChecksums=1, fontNumber=-1):
         signature = Tag(file.read(4))
@@ -130,14 +132,7 @@ class WOFFReader(SFNTReader):
         self.flavorData = self.FlavorData(self)
 
 
-class WOFFWriter(SFNTWriter):
-
-    flavor = 'woff'
-    signature = b"wOFF"
-    FlavorData = WOFFFlavorData
-    directoryFormat = woffDirectoryFormat
-    directorySize = woffDirectorySize
-    DirectoryEntry = WOFFDirectoryEntry
+class WOFFWriter(WOFFMixin, SFNTWriter):
 
     def setFlavorData(self, flavorData):
         self.flavorData = self.FlavorData()
