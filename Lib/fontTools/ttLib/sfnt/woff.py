@@ -95,11 +95,13 @@ class WOFFFlavorData(object):
                 assert len(data) == reader.privLength
                 self.privData = data
 
-    def decodeData(self, rawData):
+    @staticmethod
+    def decodeData(rawData):
         import zlib
         return zlib.decompress(rawData)
 
-    def encodeData(self, data):
+    @staticmethod
+    def encodeData(data):
         import zlib
         return zlib.compress(data)
 
