@@ -164,21 +164,7 @@ class WOFF2Reader(WOFF2Mixin, WOFFReader):
 				'https://github.com/google/brotli')
 			raise ImportError("No module named brotli")
 		super(WOFF2Reader, self).__init__(file, checkChecksums, fontNumber)
-		# decompress font data
-		self.file.seek(self.compressedDataOffset)
-		compressedData = self.file.read(self.totalCompressedSize)
-		if len(compressedData) != self.totalCompressedSize:
-			raise TTLibError(
-				"Not enough compressed data: expected %d, found %d"
-				% (self.totalCompressedSize, len(compressedData)))
-		decompressedData = brotli.decompress(compressedData)
-		totalUncompressedSize = sum([entry.length for entry in self.tables.values()])
-		if len(decompressedData) != totalUncompressedSize:
-			raise TTLibError(
-				'unexpected size for decompressed font data: expected %d, found %d'
-				% (totalUncompressedSize, len(decompressedData)))
-		# write decompressed data to temporary buffer
-		self.transformBuffer = BytesIO(decompressedData)
+		self._decompressFontData()
 		# make empty TTFont to store data while reconstructing tables
 		self.ttFont = TTFont(recalcBBoxes=False, recalcTimestamp=False)
 
@@ -195,6 +181,22 @@ class WOFF2Reader(WOFF2Mixin, WOFFReader):
 			offset += entry.length
 		# compressed font data starts at the end of variable-length table directory
 		self.compressedDataOffset = self.file.tell()
+
+	def _decompressFontData(self):
+		self.file.seek(self.compressedDataOffset)
+		compressedData = self.file.read(self.totalCompressedSize)
+		if len(compressedData) != self.totalCompressedSize:
+			raise TTLibError(
+				"Not enough compressed data: expected %d, found %d"
+				% (self.totalCompressedSize, len(compressedData)))
+		decompressedData = brotli.decompress(compressedData)
+		totalUncompressedSize = sum([entry.length for entry in self.tables.values()])
+		if len(decompressedData) != totalUncompressedSize:
+			raise TTLibError(
+				'unexpected size for decompressed font data: expected %d, found %d'
+				% (totalUncompressedSize, len(decompressedData)))
+		# write decompressed data to temporary buffer
+		self.transformBuffer = BytesIO(decompressedData)
 
 	def __getitem__(self, tag):
 		"""Fetch the raw table data. Reconstruct transformed tables."""
