@@ -501,8 +501,7 @@ class WOFF2WriterTest(unittest.TestCase):
 		# version from head.fontRevision
 		fontRevision = self.font['head'].fontRevision
 		versionTuple = tuple(int(i) for i in str(fontRevision).split("."))
-		entry = self.writer.tables['head'] = ttLib.getTableClass('head')()
-		entry.data = self.font.getTableData('head')
+		self.writer.headTable = self.font.getTableData('head')
 		self.assertEqual(versionTuple, self.writer._getVersion())
 		# version from writer.flavorData
 		flavorData = self.writer.flavorData = WOFF2FlavorData()
