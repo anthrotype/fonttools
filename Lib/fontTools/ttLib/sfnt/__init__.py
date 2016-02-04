@@ -301,15 +301,17 @@ class SFNTWriter(object):
 
 		entry = self.DirectoryEntry()
 		entry.tag = Tag(tag)
-		if tag == 'head':
-			entry.checkSum = calcChecksum(data[:8] + b'\0\0\0\0' + data[12:])
-			self.headTable = data
-			entry.uncompressed = True
-		else:
-			entry.checkSum = calcChecksum(data)
+		entry.checkSum = self._calcTableChecksum(tag, data)
 		self._writeTable(entry, data)
 
 		self.tables[tag] = entry
+
+	@staticmethod
+	def _calcTableChecksum(tag, data):
+		if tag == 'head':
+			return calcChecksum(data[:8] + b'\0\0\0\0' + data[12:])
+		else:
+			return calcChecksum(data)
 
 	def _writeTable(self, entry, data):
 		entry.offset = self.nextTableOffset
