@@ -7,12 +7,9 @@ from collections import OrderedDict
 from fontTools.misc import sstruct
 from fontTools.misc.arrayTools import calcIntBounds
 from fontTools.misc.textTools import pad
-from fontTools.ttLib import (TTFont, TTLibError, getTableModule, getTableClass,
-	getSearchRange)
-from fontTools.ttLib.sfnt.woff import WOFFReader, WOFFFlavorData
-from fontTools.ttLib.sfnt import (SFNTWriter, DirectoryEntry,
-	sfntDirectoryFormat, sfntDirectorySize, SFNTDirectoryEntry,
-	sfntDirectoryEntrySize, calcChecksum)
+from fontTools.ttLib import TTFont, TTLibError, getTableModule, getTableClass
+from fontTools.ttLib.sfnt.woff import WOFFReader, WOFFWriter, WOFFFlavorData
+from fontTools.ttLib.sfnt import DirectoryEntry
 from fontTools.ttLib.tables import ttProgram
 import logging
 
@@ -154,15 +151,18 @@ class WOFF2Mixin(object):
 	directorySize = woff2DirectorySize
 	DirectoryEntry = WOFF2DirectoryEntry
 
+	def __init__(self, *args, **kwargs):
+		if not haveBrotli:
+			log.error(
+				'The WOFF2 encoder requires the Brotli Python extension, available at: '
+				'https://github.com/google/brotli')
+			raise ImportError("No module named brotli")
+		super(WOFF2Mixin, self).__init__(*args, **kwargs)
+
 
 class WOFF2Reader(WOFF2Mixin, WOFFReader):
 
 	def __init__(self, file, checkChecksums=1, fontNumber=-1):
-		if not haveBrotli:
-			log.error(
-				'The WOFF2 decoder requires the Brotli Python extension, available at: '
-				'https://github.com/google/brotli')
-			raise ImportError("No module named brotli")
 		super(WOFF2Reader, self).__init__(file, checkChecksums, fontNumber)
 		self._decompressFontData()
 		# make empty TTFont to store data while reconstructing tables
@@ -251,60 +251,38 @@ class WOFF2Reader(WOFF2Mixin, WOFFReader):
 		return data
 
 
-class WOFF2Writer(SFNTWriter):
-
-	flavor = "woff2"
+class WOFF2Writer(WOFF2Mixin, WOFFWriter):
 
 	def __init__(self, file, numTables, sfntVersion="\000\001\000\000",
-		         flavor=None, flavorData=None):
-		if not haveBrotli:
-			log.error(
-				'The WOFF2 encoder requires the Brotli Python extension, available at: '
-				'https://github.com/google/brotli')
-			raise ImportError("No module named brotli")
-
-		self.file = file
-		self.numTables = numTables
-		self.sfntVersion = Tag(sfntVersion)
-		self.flavorData = flavorData or WOFF2FlavorData()
-
-		self.directoryFormat = woff2DirectoryFormat
-		self.directorySize = woff2DirectorySize
-		self.DirectoryEntry = WOFF2DirectoryEntry
-
-		self.signature = Tag("wOF2")
-
-		self.nextTableOffset = 0
-		self.transformBuffer = BytesIO()
-
-		self.tables = OrderedDict()
-
+		         flavor="woff2", flavorData=None):
+		super(WOFF2Writer, self).__init__(file, numTables, sfntVersion, flavor, flavorData)
 		# make empty TTFont to store data while normalising and transforming tables
 		self.ttFont = TTFont(recalcBBoxes=False, recalcTimestamp=False)
 
+	def _seekFirstTable(self):
+		# initialise empty 'transformBuffer'
+		self.nextTableOffset = 0
+		self.transformBuffer = BytesIO()
+
 	def __setitem__(self, tag, data):
 		"""Associate new entry named 'tag' with raw table data."""
-		if tag in self.tables:
-			raise TTLibError("cannot rewrite '%s' table" % tag)
 		if tag == 'DSIG':
 			# always drop DSIG table, since the encoding process can invalidate it
 			self.numTables -= 1
 			return
+		super(WOFF2Writer, self).__setitem__(tag, data)
+		self.tables[tag].flags = getKnownTagIndex(tag)
 
-		entry = self.DirectoryEntry()
-		entry.tag = Tag(tag)
-		entry.flags = getKnownTagIndex(entry.tag)
+	def _writeTable(self, entry, data):
 		# WOFF2 table data are written to disk only on close(), after all tags
-		# have been specified
+		# have been specified, and glyf and loca can be transformed
+		entry.origLength = len(data)
 		entry.data = data
-
-		self.tables[tag] = entry
 
 	def close(self):
 		""" All tags must have been specified. Now write the table data and directory.
 		"""
-		if len(self.tables) != self.numTables:
-			raise TTLibError("wrong number of tables; expected %d, found %d" % (self.numTables, len(self.tables)))
+		self._assertNumTables()
 
 		if self.sfntVersion in ("\x00\x01\x00\x00", "true"):
 			isTrueType = True
@@ -331,15 +309,14 @@ class WOFF2Writer(SFNTWriter):
 		# TODO(user): remove to match spec once browsers are on newer OTS
 		self.tables = OrderedDict(sorted(self.tables.items()))
 
-		self.totalSfntSize = self._calcSFNTChecksumsLengthsAndOffsets()
+		self.totalSfntSize = self._calcSfntSize()
+		self.majorVersion, self.minorVersion = self._getVersion()
 
 		fontData = self._transformTables()
 		compressedFont = brotli.compress(fontData, mode=brotli.MODE_FONT)
 
 		self.totalCompressedSize = len(compressedFont)
 		self.length = self._calcTotalSize()
-		self.majorVersion, self.minorVersion = self._getVersion()
-		self.reserved = 0
 
 		directory = self._packTableDirectory()
 		self.file.seek(0)
@@ -393,23 +370,9 @@ class WOFF2Writer(SFNTWriter):
 
 	def _compileTable(self, tag):
 		""" Compile table and store it in its 'data' attribute. """
-		self.tables[tag].data = self.ttFont[tag].compile(self.ttFont)
-
-	def _calcSFNTChecksumsLengthsAndOffsets(self):
-		""" Compute the 'original' SFNT checksums, lengths and offsets for checksum
-		adjustment calculation. Return the total size of the uncompressed font.
-		"""
-		offset = sfntDirectorySize + sfntDirectoryEntrySize * len(self.tables)
-		for tag, entry in self.tables.items():
-			data = entry.data
-			entry.origOffset = offset
-			entry.origLength = len(data)
-			if tag == 'head':
-				entry.checkSum = calcChecksum(data[:8] + b'\0\0\0\0' + data[12:])
-			else:
-				entry.checkSum = calcChecksum(data)
-			offset += (entry.origLength + 3) & ~3
-		return offset
+		entry = self.tables[tag]
+		entry.data = self.ttFont[tag].compile(self.ttFont)
+		entry.origLength = len(entry.data)
 
 	def _transformTables(self):
 		"""Return transformed font data."""
@@ -421,7 +384,7 @@ class WOFF2Writer(SFNTWriter):
 			entry.offset = self.nextTableOffset
 			entry.saveData(self.transformBuffer, data)
 			self.nextTableOffset += entry.length
-		self.writeMasterChecksum()
+		self._writeMasterChecksum()
 		fontData = self.transformBuffer.getvalue()
 		return fontData
 
@@ -442,33 +405,12 @@ class WOFF2Writer(SFNTWriter):
 
 	def _calcMasterChecksum(self):
 		"""Calculate checkSumAdjustment."""
-		tags = list(self.tables.keys())
-		checksums = []
-		for i in range(len(tags)):
-			checksums.append(self.tables[tags[i]].checkSum)
+		# we also need to compute the 'original' SFNT checksums
+		for tag, entry in self.tables.items():
+			entry.checkSum = self._calcTableChecksum(entry.tag, entry.data)
+		return super(WOFF2Writer, self)._calcMasterChecksum(b"")
 
-		# Create a SFNT directory for checksum calculation purposes
-		self.searchRange, self.entrySelector, self.rangeShift = getSearchRange(self.numTables, 16)
-		directory = sstruct.pack(sfntDirectoryFormat, self)
-		tables = sorted(self.tables.items())
-		for tag, entry in tables:
-			sfntEntry = SFNTDirectoryEntry()
-			sfntEntry.tag = entry.tag
-			sfntEntry.checkSum = entry.checkSum
-			sfntEntry.offset = entry.origOffset
-			sfntEntry.length = entry.origLength
-			directory = directory + sfntEntry.toString()
-
-		directory_end = sfntDirectorySize + len(self.tables) * sfntDirectoryEntrySize
-		assert directory_end == len(directory)
-
-		checksums.append(calcChecksum(directory))
-		checksum = sum(checksums) & 0xffffffff
-		# BiboAfba!
-		checksumadjustment = (0xB1B0AFBA - checksum) & 0xffffffff
-		return checksumadjustment
-
-	def writeMasterChecksum(self):
+	def _writeMasterChecksum(self):
 		"""Write checkSumAdjustment to the transformBuffer."""
 		checksumadjustment = self._calcMasterChecksum()
 		self.transformBuffer.seek(self.tables['head'].offset + 8)
@@ -484,63 +426,12 @@ class WOFF2Writer(SFNTWriter):
 		offset = self._calcFlavorDataOffsetsAndSize(offset)
 		return offset
 
-	def _calcFlavorDataOffsetsAndSize(self, start):
-		"""Calculate offsets and lengths for any meta- and/or private data."""
-		offset = start
-		data = self.flavorData
-		if data.metaData:
-			self.metaOrigLength = len(data.metaData)
-			self.metaOffset = offset
-			self.compressedMetaData = brotli.compress(
-				data.metaData, mode=brotli.MODE_TEXT)
-			self.metaLength = len(self.compressedMetaData)
-			offset += self.metaLength
-		else:
-			self.metaOffset = self.metaLength = self.metaOrigLength = 0
-			self.compressedMetaData = b""
-		if data.privData:
-			# make sure private data is padded to 4-byte boundary
-			offset = (offset + 3) & ~3
-			self.privOffset = offset
-			self.privLength = len(data.privData)
-			offset += self.privLength
-		else:
-			self.privOffset = self.privLength = 0
-		return offset
-
-	def _getVersion(self):
-		"""Return the WOFF2 font's (majorVersion, minorVersion) tuple."""
-		data = self.flavorData
-		if data.majorVersion is not None and data.minorVersion is not None:
-			return data.majorVersion, data.minorVersion
-		else:
-			# if None, return 'fontRevision' from 'head' table
-			if 'head' in self.tables:
-				return struct.unpack(">HH", self.tables['head'].data[4:8])
-			else:
-				return 0, 0
-
 	def _packTableDirectory(self):
 		"""Return WOFF2 table directory data."""
 		directory = sstruct.pack(self.directoryFormat, self)
 		for entry in self.tables.values():
 			directory = directory + entry.toString()
 		return directory
-
-	def _writeFlavorData(self):
-		"""Write metadata and/or private data using appropiate padding."""
-		compressedMetaData = self.compressedMetaData
-		privData = self.flavorData.privData
-		if compressedMetaData and privData:
-			compressedMetaData = pad(compressedMetaData, size=4)
-		if compressedMetaData:
-			self.file.seek(self.metaOffset)
-			assert self.file.tell() == self.metaOffset
-			self.file.write(compressedMetaData)
-		if privData:
-			self.file.seek(self.privOffset)
-			assert self.file.tell() == self.privOffset
-			self.file.write(privData)
 
 	def reordersTables(self):
 		return True
