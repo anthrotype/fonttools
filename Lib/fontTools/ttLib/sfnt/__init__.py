@@ -110,6 +110,7 @@ class SFNTDirectoryEntry(DirectoryEntry):
 class SFNTReader(object):
 
 	flavor = None
+	flavorData = None
 	directoryFormat = sfntDirectoryFormat
 	directorySize = sfntDirectorySize
 	DirectoryEntry = SFNTDirectoryEntry
@@ -139,9 +140,7 @@ class SFNTReader(object):
 	def __init__(self, file, checkChecksums=1, fontNumber=-1):
 		self.file = file
 		self.checkChecksums = checkChecksums
-
 		self._readDirectory()
-		self._readFlavorData()
 
 	def _readDirectory(self):
 		data = self.file.read(self.directorySize)
@@ -161,9 +160,6 @@ class SFNTReader(object):
 			tag = Tag(entry.tag)
 			tables[tag] = entry
 		self.tables = OrderedDict(sorted(tables.items(), key=lambda i: i[1].offset))
-
-	def _readFlavorData(self):
-		self.flavorData = None
 
 	def has_key(self, tag):
 		return tag in self.tables
