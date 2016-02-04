@@ -408,13 +408,11 @@ class DirectoryEntry(object):
 		file.seek(self.offset)
 		data = file.read(self.length)
 		assert len(data) == self.length
-		if hasattr(self.__class__, 'decodeData'):
-			data = self.decodeData(data)
+		data = self.decodeData(data)
 		return data
 
 	def saveData(self, file, data):
-		if hasattr(self.__class__, 'encodeData'):
-			data = self.encodeData(data)
+		data = self.encodeData(data)
 		self.length = len(data)
 		file.seek(self.offset)
 		file.write(data)
