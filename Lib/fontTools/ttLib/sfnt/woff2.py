@@ -9,7 +9,8 @@ from fontTools.misc.arrayTools import calcIntBounds
 from fontTools.misc.textTools import pad
 from fontTools.ttLib import (TTFont, TTLibError, getTableModule, getTableClass,
 	getSearchRange)
-from fontTools.ttLib.sfnt import (SFNTReader, SFNTWriter, DirectoryEntry,
+from fontTools.ttLib.sfnt.woff import WOFFReader
+from fontTools.ttLib.sfnt import (SFNTWriter, DirectoryEntry,
 	WOFFFlavorData, sfntDirectoryFormat, sfntDirectorySize, SFNTDirectoryEntry,
 	sfntDirectoryEntrySize, calcChecksum)
 from fontTools.ttLib.tables import ttProgram
@@ -26,9 +27,10 @@ except ImportError:
 	pass
 
 
-class WOFF2Reader(SFNTReader):
+class WOFF2Reader(WOFFReader):
 
 	flavor = "woff2"
+	signature = b"wOF2"
 
 	def __init__(self, file, checkChecksums=1, fontNumber=-1):
 		if not haveBrotli:
@@ -36,47 +38,38 @@ class WOFF2Reader(SFNTReader):
 				'The WOFF2 decoder requires the Brotli Python extension, available at: '
 				'https://github.com/google/brotli')
 			raise ImportError("No module named brotli")
-
-		self.file = file
-
-		signature = Tag(self.file.read(4))
-		if signature != b"wOF2":
-			raise TTLibError("Not a WOFF2 font (bad signature)")
-
-		self.file.seek(0)
-		self.DirectoryEntry = WOFF2DirectoryEntry
-		data = self.file.read(woff2DirectorySize)
-		if len(data) != woff2DirectorySize:
-			raise TTLibError('Not a WOFF2 font (not enough data)')
-		sstruct.unpack(woff2DirectoryFormat, data, self)
-
-		self.tables = OrderedDict()
-		offset = 0
-		for i in range(self.numTables):
-			entry = self.DirectoryEntry()
-			entry.fromFile(self.file)
-			tag = Tag(entry.tag)
-			self.tables[tag] = entry
-			entry.offset = offset
-			offset += entry.length
-
-		totalUncompressedSize = offset
+		super(WOFF2Reader, self).__init__(file, checkChecksums, fontNumber)
+		# decompress font data
+		self.file.seek(self.compressedDataOffset)
 		compressedData = self.file.read(self.totalCompressedSize)
+		if len(compressedData) != self.totalCompressedSize:
+			raise TTLibError(
+				"Not enough compressed data: expected %d, found %d"
+				% (self.totalCompressedSize, len(compressedData)))
 		decompressedData = brotli.decompress(compressedData)
+		totalUncompressedSize = sum([entry.length for entry in self.tables.values()])
 		if len(decompressedData) != totalUncompressedSize:
 			raise TTLibError(
 				'unexpected size for decompressed font data: expected %d, found %d'
 				% (totalUncompressedSize, len(decompressedData)))
+		# write decompressed data to temporary buffer
 		self.transformBuffer = BytesIO(decompressedData)
-
-		self.file.seek(0, 2)
-		if self.length != self.file.tell():
-			raise TTLibError("reported 'length' doesn't match the actual file size")
-
-		self.flavorData = WOFF2FlavorData(self)
-
 		# make empty TTFont to store data while reconstructing tables
 		self.ttFont = TTFont(recalcBBoxes=False, recalcTimestamp=False)
+
+	def _readDirectoryEntries(self):
+		self.tables = OrderedDict()
+		# calculate offsets to individual tables inside 'transformBuffer'
+		offset = 0
+		for i in range(self.numTables):
+			entry = self.DirectoryEntry()
+			entry.fromFile(self.file)
+			entry.offset = offset
+			tag = Tag(entry.tag)
+			self.tables[tag] = entry
+			offset += entry.length
+		# compressed font data starts at the end of variable-length table directory
+		self.compressedDataOffset = self.file.tell()
 
 	def __getitem__(self, tag):
 		"""Fetch the raw table data. Reconstruct transformed tables."""
