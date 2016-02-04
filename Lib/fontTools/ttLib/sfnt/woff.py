@@ -150,7 +150,7 @@ class WOFFWriter(SFNTWriter):
     def close(self):
         self._assertNumTables()
 
-        self.signature = b"wOFF"
+        self.signature = self.__class__.signature
         self.reserved = 0
         self.totalSfntSize = self._calcSftnSize()
         self.majorVersion, self.minorVersion = self._getVersion()
