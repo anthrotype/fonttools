@@ -134,6 +134,12 @@ class WOFFReader(WOFFMixin, SFNTReader):
 
 class WOFFWriter(WOFFMixin, SFNTWriter):
 
+    def __init__(self, file, numTables, sfntVersion="\000\001\000\000",
+                 flavor="woff", flavorData=None):
+        super(WOFFWriter, self).__init__(file, numTables, sfntVersion, flavor, flavorData)
+        self.signature = self.__class__.signature
+        self.reserved = 0
+
     def setFlavorData(self, flavorData):
         self.flavorData = self.FlavorData()
         if flavorData is not None:
@@ -142,12 +148,16 @@ class WOFFWriter(WOFFMixin, SFNTWriter):
             # copy instead of replacing flavorData, to exchange between WOFF/WOFF2
             self.flavorData.__dict__.update(flavorData.__dict__)
 
+    def __setitem__(self, tag, data):
+        super(WOFFWriter, self).__setitem__(tag, data)
+        if tag == 'head':
+            self.headTable = data
+            self.tables[tag].uncompressed = True
+
     def close(self):
         self._assertNumTables()
 
-        self.signature = self.__class__.signature
-        self.reserved = 0
-        self.totalSfntSize = self._calcSftnSize()
+        self.totalSfntSize = self._calcSfntSize()
         self.majorVersion, self.minorVersion = self._getVersion()
         self.length = self._calcTotalSize()
 
@@ -156,8 +166,8 @@ class WOFFWriter(WOFFMixin, SFNTWriter):
 
         self._writeFlavorData()
 
-    def _calcSftnSize(self):
-        # calculate total size of uncompressed SFNT font
+    def _calcSfntSize(self):
+        """ Return the total size of the uncompressed font. """
         size = sfntDirectorySize + sfntDirectoryEntrySize * len(self.tables)
         for entry in self.tables.values():
             size += (entry.origLength + 3) & ~3
@@ -183,8 +193,9 @@ class WOFFWriter(WOFFMixin, SFNTWriter):
         offset = self._calcFlavorDataOffsetsAndSize(offset)
         return offset
 
-    def _calcFlavorDataOffsetsAndSize(self, offset):
+    def _calcFlavorDataOffsetsAndSize(self, start):
         # calculate offsets and lengths for any meta or private data
+        offset = start
         data = self.flavorData
         if data.metaData:
             self.metaOrigLength = len(data.metaData)
@@ -211,7 +222,7 @@ class WOFFWriter(WOFFMixin, SFNTWriter):
         compressedMetaData = self.compressedMetaData
         privData = self.flavorData.privData
         if compressedMetaData and privData:
-            compressedMetaData = pad(compressedMetaData, 4)
+            compressedMetaData = pad(compressedMetaData, size=4)
         if compressedMetaData:
             self.file.seek(self.metaOffset)
             assert self.file.tell() == self.metaOffset
@@ -227,15 +238,12 @@ class WOFFWriter(WOFFMixin, SFNTWriter):
         return super(WOFFWriter, self)._calcMasterChecksum(directory)
 
     def _makeDummySFNTDirectory(self):
-        # compute 'original' SFNT table offsets
         offset = sfntDirectorySize + sfntDirectoryEntrySize * len(self.tables)
         for entry in self.tables.values():
             entry.origOffset = offset
             offset += (entry.origLength + 3) & ~3
-        # make dummy SFNT table directory
         directory = sstruct.pack(sfntDirectoryFormat, self)
         for tag, entry in sorted(self.tables.items()):
-            assert hasattr(entry, 'origLength')
             sfntEntry = SFNTDirectoryEntry()
             sfntEntry.tag = entry.tag
             sfntEntry.checkSum = entry.checkSum
