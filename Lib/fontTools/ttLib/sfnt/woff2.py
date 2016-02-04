@@ -9,9 +9,9 @@ from fontTools.misc.arrayTools import calcIntBounds
 from fontTools.misc.textTools import pad
 from fontTools.ttLib import (TTFont, TTLibError, getTableModule, getTableClass,
 	getSearchRange)
-from fontTools.ttLib.sfnt.woff import WOFFReader
+from fontTools.ttLib.sfnt.woff import WOFFReader, WOFFFlavorData
 from fontTools.ttLib.sfnt import (SFNTWriter, DirectoryEntry,
-	WOFFFlavorData, sfntDirectoryFormat, sfntDirectorySize, SFNTDirectoryEntry,
+	sfntDirectoryFormat, sfntDirectorySize, SFNTDirectoryEntry,
 	sfntDirectoryEntrySize, calcChecksum)
 from fontTools.ttLib.tables import ttProgram
 import logging
@@ -27,10 +27,135 @@ except ImportError:
 	pass
 
 
-class WOFF2Reader(WOFFReader):
+# -- woff2 directory helpers and cruft
+
+woff2DirectoryFormat = """
+		> # big endian
+		signature:           4s   # "wOF2"
+		sfntVersion:         4s
+		length:              L    # total woff2 file size
+		numTables:           H    # number of tables
+		reserved:            H    # set to 0
+		totalSfntSize:       L    # uncompressed size
+		totalCompressedSize: L    # compressed size
+		majorVersion:        H    # major version of WOFF file
+		minorVersion:        H    # minor version of WOFF file
+		metaOffset:          L    # offset to metadata block
+		metaLength:          L    # length of compressed metadata
+		metaOrigLength:      L    # length of uncompressed metadata
+		privOffset:          L    # offset to private data block
+		privLength:          L    # length of private data block
+"""
+
+woff2DirectorySize = sstruct.calcsize(woff2DirectoryFormat)
+
+woff2KnownTags = (
+	"cmap", "head", "hhea", "hmtx", "maxp", "name", "OS/2", "post", "cvt ",
+	"fpgm", "glyf", "loca", "prep", "CFF ", "VORG", "EBDT", "EBLC", "gasp",
+	"hdmx", "kern", "LTSH", "PCLT", "VDMX", "vhea", "vmtx", "BASE", "GDEF",
+	"GPOS", "GSUB", "EBSC", "JSTF", "MATH", "CBDT", "CBLC", "COLR", "CPAL",
+	"SVG ", "sbix", "acnt", "avar", "bdat", "bloc", "bsln", "cvar", "fdsc",
+	"feat", "fmtx", "fvar", "gvar", "hsty", "just", "lcar", "mort", "morx",
+	"opbd", "prop", "trak", "Zapf", "Silf", "Glat", "Gloc", "Feat", "Sill")
+
+def getKnownTagIndex(tag):
+	"""Return index of 'tag' in woff2KnownTags list. Return 63 if not found."""
+	for i in range(len(woff2KnownTags)):
+		if tag == woff2KnownTags[i]:
+			return i
+	return woff2UnknownTagIndex
+
+woff2FlagsFormat = """
+		> # big endian
+		flags: B  # table type and flags
+"""
+
+woff2FlagsSize = sstruct.calcsize(woff2FlagsFormat)
+
+woff2UnknownTagFormat = """
+		> # big endian
+		tag: 4s  # 4-byte tag (optional)
+"""
+
+woff2UnknownTagSize = sstruct.calcsize(woff2UnknownTagFormat)
+
+woff2UnknownTagIndex = 0x3F
+
+woff2Base128MaxSize = 5
+woff2DirectoryEntryMaxSize = woff2FlagsSize + woff2UnknownTagSize + 2 * woff2Base128MaxSize
+
+woff2TransformedTableTags = ('glyf', 'loca')
+
+
+class WOFF2DirectoryEntry(DirectoryEntry):
+
+	def fromFile(self, file):
+		pos = file.tell()
+		data = file.read(woff2DirectoryEntryMaxSize)
+		left = self.fromString(data)
+		consumed = len(data) - len(left)
+		file.seek(pos + consumed)
+
+	def fromString(self, data):
+		if len(data) < 1:
+			raise TTLibError("can't read table 'flags': not enough data")
+		dummy, data = sstruct.unpack2(woff2FlagsFormat, data, self)
+		if self.flags & 0x3F == 0x3F:
+			# if bits [0..5] of the flags byte == 63, read a 4-byte arbitrary tag value
+			if len(data) < woff2UnknownTagSize:
+				raise TTLibError("can't read table 'tag': not enough data")
+			dummy, data = sstruct.unpack2(woff2UnknownTagFormat, data, self)
+		else:
+			# otherwise, tag is derived from a fixed 'Known Tags' table
+			self.tag = woff2KnownTags[self.flags & 0x3F]
+		self.tag = Tag(self.tag)
+		if self.flags & 0xC0 != 0:
+			raise TTLibError('bits 6-7 are reserved and must be 0')
+		self.origLength, data = unpackBase128(data)
+		self.length = self.origLength
+		if self.tag in woff2TransformedTableTags:
+			self.length, data = unpackBase128(data)
+			if self.tag == 'loca' and self.length != 0:
+				raise TTLibError(
+					"the transformLength of the 'loca' table must be 0")
+		# return left over data
+		return data
+
+	def toString(self):
+		data = bytechr(self.flags)
+		if (self.flags & 0x3F) == 0x3F:
+			data += struct.pack('>4s', self.tag.tobytes())
+		data += packBase128(self.origLength)
+		if self.tag in woff2TransformedTableTags:
+			data += packBase128(self.length)
+		return data
+
+
+class WOFF2FlavorData(WOFFFlavorData):
 
 	flavor = "woff2"
+
+	@staticmethod
+	def decodeData(rawData):
+		import brotli
+		return brotli.decompress(rawData)
+
+	@staticmethod
+	def encodeData(data):
+		import brotli
+		return brotli.compress(data)
+
+
+class WOFF2Mixin(object):
+	flavor = "woff2"
 	signature = b"wOF2"
+	FlavorData = WOFF2FlavorData
+	directoryFormat = woff2DirectoryFormat
+	directorySize = woff2DirectorySize
+	DirectoryEntry = WOFF2DirectoryEntry
+
+
+class WOFF2Reader(WOFF2Mixin, WOFFReader):
 
 	def __init__(self, file, checkChecksums=1, fontNumber=-1):
 		if not haveBrotli:
@@ -419,58 +544,6 @@ class WOFF2Writer(SFNTWriter):
 		return True
 
 
-# -- woff2 directory helpers and cruft
-
-woff2DirectoryFormat = """
-		> # big endian
-		signature:           4s   # "wOF2"
-		sfntVersion:         4s
-		length:              L    # total woff2 file size
-		numTables:           H    # number of tables
-		reserved:            H    # set to 0
-		totalSfntSize:       L    # uncompressed size
-		totalCompressedSize: L    # compressed size
-		majorVersion:        H    # major version of WOFF file
-		minorVersion:        H    # minor version of WOFF file
-		metaOffset:          L    # offset to metadata block
-		metaLength:          L    # length of compressed metadata
-		metaOrigLength:      L    # length of uncompressed metadata
-		privOffset:          L    # offset to private data block
-		privLength:          L    # length of private data block
-"""
-
-woff2DirectorySize = sstruct.calcsize(woff2DirectoryFormat)
-
-woff2KnownTags = (
-	"cmap", "head", "hhea", "hmtx", "maxp", "name", "OS/2", "post", "cvt ",
-	"fpgm", "glyf", "loca", "prep", "CFF ", "VORG", "EBDT", "EBLC", "gasp",
-	"hdmx", "kern", "LTSH", "PCLT", "VDMX", "vhea", "vmtx", "BASE", "GDEF",
-	"GPOS", "GSUB", "EBSC", "JSTF", "MATH", "CBDT", "CBLC", "COLR", "CPAL",
-	"SVG ", "sbix", "acnt", "avar", "bdat", "bloc", "bsln", "cvar", "fdsc",
-	"feat", "fmtx", "fvar", "gvar", "hsty", "just", "lcar", "mort", "morx",
-	"opbd", "prop", "trak", "Zapf", "Silf", "Glat", "Gloc", "Feat", "Sill")
-
-woff2FlagsFormat = """
-		> # big endian
-		flags: B  # table type and flags
-"""
-
-woff2FlagsSize = sstruct.calcsize(woff2FlagsFormat)
-
-woff2UnknownTagFormat = """
-		> # big endian
-		tag: 4s  # 4-byte tag (optional)
-"""
-
-woff2UnknownTagSize = sstruct.calcsize(woff2UnknownTagFormat)
-
-woff2UnknownTagIndex = 0x3F
-
-woff2Base128MaxSize = 5
-woff2DirectoryEntryMaxSize = woff2FlagsSize + woff2UnknownTagSize + 2 * woff2Base128MaxSize
-
-woff2TransformedTableTags = ('glyf', 'loca')
-
 woff2GlyfTableFormat = """
 		> # big endian
 		version:                  L  # = 0x00000000
@@ -494,58 +567,6 @@ bboxFormat = """
 		xMax:				h
 		yMax:				h
 """
-
-
-def getKnownTagIndex(tag):
-	"""Return index of 'tag' in woff2KnownTags list. Return 63 if not found."""
-	for i in range(len(woff2KnownTags)):
-		if tag == woff2KnownTags[i]:
-			return i
-	return woff2UnknownTagIndex
-
-
-class WOFF2DirectoryEntry(DirectoryEntry):
-
-	def fromFile(self, file):
-		pos = file.tell()
-		data = file.read(woff2DirectoryEntryMaxSize)
-		left = self.fromString(data)
-		consumed = len(data) - len(left)
-		file.seek(pos + consumed)
-
-	def fromString(self, data):
-		if len(data) < 1:
-			raise TTLibError("can't read table 'flags': not enough data")
-		dummy, data = sstruct.unpack2(woff2FlagsFormat, data, self)
-		if self.flags & 0x3F == 0x3F:
-			# if bits [0..5] of the flags byte == 63, read a 4-byte arbitrary tag value
-			if len(data) < woff2UnknownTagSize:
-				raise TTLibError("can't read table 'tag': not enough data")
-			dummy, data = sstruct.unpack2(woff2UnknownTagFormat, data, self)
-		else:
-			# otherwise, tag is derived from a fixed 'Known Tags' table
-			self.tag = woff2KnownTags[self.flags & 0x3F]
-		self.tag = Tag(self.tag)
-		if self.flags & 0xC0 != 0:
-			raise TTLibError('bits 6-7 are reserved and must be 0')
-		self.origLength, data = unpackBase128(data)
-		self.length = self.origLength
-		if self.tag in woff2TransformedTableTags:
-			self.length, data = unpackBase128(data)
-			if self.tag == 'loca' and self.length != 0:
-				raise TTLibError(
-					"the transformLength of the 'loca' table must be 0")
-		# return left over data
-		return data
-
-	def toString(self):
-		data = bytechr(self.flags)
-		if (self.flags & 0x3F) == 0x3F:
-			data += struct.pack('>4s', self.tag.tobytes())
-		data += packBase128(self.origLength)
-		if self.tag in woff2TransformedTableTags:
-			data += packBase128(self.length)
-		return data
 
 
 class WOFF2LocaTable(getTableClass('loca')):
@@ -902,34 +923,6 @@ class WOFF2GlyfTable(getTableClass('glyf')):
 
 		self.flagStream += flags.tostring()
 		self.glyphStream += triplets.tostring()
-
-
-class WOFF2FlavorData(WOFFFlavorData):
-
-	Flavor = 'woff2'
-
-	def __init__(self, reader=None):
-		if not haveBrotli:
-			raise ImportError("No module named brotli")
-		self.majorVersion = None
-		self.minorVersion = None
-		self.metaData = None
-		self.privData = None
-		if reader:
-			self.majorVersion = reader.majorVersion
-			self.minorVersion = reader.minorVersion
-			if reader.metaLength:
-				reader.file.seek(reader.metaOffset)
-				rawData = reader.file.read(reader.metaLength)
-				assert len(rawData) == reader.metaLength
-				data = brotli.decompress(rawData)
-				assert len(data) == reader.metaOrigLength
-				self.metaData = data
-			if reader.privLength:
-				reader.file.seek(reader.privOffset)
-				data = reader.file.read(reader.privLength)
-				assert len(data) == reader.privLength
-				self.privData = data
 
 
 def unpackBase128(data):
