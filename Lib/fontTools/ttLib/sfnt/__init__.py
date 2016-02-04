@@ -15,7 +15,7 @@ a table's length chages you need to rewrite the whole file anyway.
 from __future__ import print_function, division, absolute_import
 from fontTools.misc.py23 import *
 from fontTools.misc import sstruct
-from fontTools.ttLib import getSearchRange
+from fontTools.ttLib import TTLibError, getSearchRange
 import struct
 from collections import OrderedDict
 import logging
@@ -26,6 +26,8 @@ log = logging.getLogger(__name__)
 
 class SFNTReader(object):
 
+	flavor = None
+
 	def __new__(cls, *args, **kwargs):
 		""" Return an instance of the SFNTReader sub-class which is compatible
 		with the input file type.
@@ -34,7 +36,10 @@ class SFNTReader(object):
 			infile = args[0]
 			sfntVersion = Tag(infile.read(4))
 			infile.seek(0)
-			if sfntVersion == "wOFF":
+			if sfntVersion == "ttcf":
+				# return new TTCReader object
+				return object.__new__(TTCReader)
+			elif sfntVersion == "wOFF":
 				# return new WOFFReader object
 				from fontTools.ttLib.sfnt.woff import WOFFReader
 				return object.__new__(WOFFReader)
@@ -49,49 +54,26 @@ class SFNTReader(object):
 		self.file = file
 		self.checkChecksums = checkChecksums
 
-		self.flavor = None
-		self.flavorData = None
-		self.DirectoryEntry = SFNTDirectoryEntry
-		self.sfntVersion = self.file.read(4)
-		self.file.seek(0)
-		if self.sfntVersion == b"ttcf":
-			data = self.file.read(ttcHeaderSize)
-			if len(data) != ttcHeaderSize:
-				from fontTools import ttLib
-				raise ttLib.TTLibError("Not a Font Collection (not enough data)")
-			sstruct.unpack(ttcHeaderFormat, data, self)
-			assert self.Version == 0x00010000 or self.Version == 0x00020000, "unrecognized TTC version 0x%08x" % self.Version
-			if not 0 <= fontNumber < self.numFonts:
-				from fontTools import ttLib
-				raise ttLib.TTLibError("specify a font number between 0 and %d (inclusive)" % (self.numFonts - 1))
-			offsetTable = struct.unpack(">%dL" % self.numFonts, self.file.read(self.numFonts * 4))
-			if self.Version == 0x00020000:
-				pass # ignoring version 2.0 signatures
-			self.file.seek(offsetTable[fontNumber])
-			data = self.file.read(sfntDirectorySize)
-			if len(data) != sfntDirectorySize:
-				from fontTools import ttLib
-				raise ttLib.TTLibError("Not a Font Collection (not enough data)")
-			sstruct.unpack(sfntDirectoryFormat, data, self)
-		elif self.sfntVersion == b"wOFF":
-			self.flavor = "woff"
-			self.DirectoryEntry = WOFFDirectoryEntry
-			data = self.file.read(woffDirectorySize)
-			if len(data) != woffDirectorySize:
-				from fontTools import ttLib
-				raise ttLib.TTLibError("Not a WOFF font (not enough data)")
-			sstruct.unpack(woffDirectoryFormat, data, self)
-		else:
-			data = self.file.read(sfntDirectorySize)
-			if len(data) != sfntDirectorySize:
-				from fontTools import ttLib
-				raise ttLib.TTLibError("Not a TrueType or OpenType font (not enough data)")
-			sstruct.unpack(sfntDirectoryFormat, data, self)
-		self.sfntVersion = Tag(self.sfntVersion)
+		self._setDirectoryFormat()
+		self._readDirectory()
+		self._readFlavorData()
 
+	def _setDirectoryFormat(self):
+		self.directoryFormat = sfntDirectoryFormat
+		self.directorySize = sfntDirectorySize
+		self.DirectoryEntry = SFNTDirectoryEntry
+
+	def _readDirectory(self):
+		data = self.file.read(self.directorySize)
+		if len(data) != self.directorySize:
+			raise TTLibError("Not a TrueType or OpenType font (not enough data)")
+		sstruct.unpack(self.directoryFormat, data, self)
+		self.sfntVersion = Tag(self.sfntVersion)
 		if self.sfntVersion not in ("\x00\x01\x00\x00", "OTTO", "true"):
-			from fontTools import ttLib
-			raise ttLib.TTLibError("Not a TrueType or OpenType font (bad sfntVersion)")
+			raise TTLibError("Not a TrueType or OpenType font (bad sfntVersion)")
+		self._readDirectoryEntries()
+
+	def _readDirectoryEntries(self):
 		tables = {}
 		for i in range(self.numTables):
 			entry = self.DirectoryEntry()
@@ -100,9 +82,8 @@ class SFNTReader(object):
 			tables[tag] = entry
 		self.tables = OrderedDict(sorted(tables.items(), key=lambda i: i[1].offset))
 
-		# Load flavor data if any
-		if self.flavor == "woff":
-			self.flavorData = WOFFFlavorData(self)
+	def _readFlavorData(self):
+		self.flavorData = None
 
 	def has_key(self, tag):
 		return tag in self.tables
@@ -115,7 +96,7 @@ class SFNTReader(object):
 	def __getitem__(self, tag):
 		"""Fetch the raw table data."""
 		entry = self.tables[Tag(tag)]
-		data = entry.loadData (self.file)
+		data = entry.loadData(self.file)
 		if self.checkChecksums:
 			if tag == 'head':
 				# Beh: we have to special-case the 'head' table.
@@ -135,6 +116,47 @@ class SFNTReader(object):
 
 	def close(self):
 		self.file.close()
+
+
+class TTCReader(SFNTReader):
+
+	flavor = "ttc"
+
+	def __init__(self, file, checkChecksums=1, fontNumber=-1):
+		self.file = file
+		self.checkChecksums = checkChecksums
+
+		self._setDirectoryFormat()
+		self._readCollectionHeader()
+		self._seekOffsetTable(fontNumber)
+		self._readDirectory()
+		self._readFlavorData()
+
+	def _readCollectionHeader(self):
+		if self.file.read(4) != b"ttcf":
+			raise TTLibError("Not a Font Collection (bad TTCTag)")
+		self.file.seek(0)
+		ttcHeaderData = self.file.read(ttcHeaderSize)
+		if len(ttcHeaderData) != ttcHeaderSize:
+			TTLibError("Not a Font Collection font (not enough data)")
+		sstruct.unpack(ttcHeaderFormat, ttcHeaderData, self)
+		if not (self.Version == 0x00010000 or self.Version == 0x00020000):
+			raise TTLibError("unrecognized TTC version 0x%08x" % self.Version)
+		offsetTableFormat = ">%dL" % self.numFonts
+		offsetTableSize = struct.calcsize(offsetTableFormat)
+		offsetTableData = self.file.read(offsetTableSize)
+		if len(offsetTableData) != offsetTableSize:
+			raise TTLibError("Not a Font Collection (not enough data)")
+		self.offsetTables = struct.unpack(offsetTableFormat, offsetTableData)
+		if self.Version == 0x00020000:
+			# TODO(anthrotype): use flavorData to store version 2.0 signatures?
+			pass
+
+	def _seekOffsetTable(self, fontNumber):
+		"""Move current position to the offset table of font 'fontNumber'."""
+		if not 0 <= fontNumber < self.numFonts:
+			raise TTLibError("specify a font number between 0 and %d (inclusive)" % (self.numFonts - 1))
+		self.file.seek(self.offsetTables[fontNumber])
 
 
 # default compression level for WOFF 1.0 tables and metadata
