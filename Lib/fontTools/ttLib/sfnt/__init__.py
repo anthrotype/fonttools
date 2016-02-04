@@ -159,46 +159,6 @@ class TTCReader(SFNTReader):
 		self.file.seek(self.offsetTables[fontNumber])
 
 
-# default compression level for WOFF 1.0 tables and metadata
-ZLIB_COMPRESSION_LEVEL = 6
-
-# if set to True, use zopfli instead of zlib for compressing WOFF 1.0.
-# The Python bindings are available at https://github.com/anthrotype/py-zopfli
-USE_ZOPFLI = False
-
-# mapping between zlib's compression levels and zopfli's 'numiterations'.
-# Use lower values for files over several MB in size or it will be too slow
-ZOPFLI_LEVELS = {
-	# 0: 0,  # can't do 0 iterations...
-	1: 1,
-	2: 3,
-	3: 5,
-	4: 8,
-	5: 10,
-	6: 15,
-	7: 25,
-	8: 50,
-	9: 100,
-}
-
-
-def compress(data, level=ZLIB_COMPRESSION_LEVEL):
-	""" Compress 'data' to Zlib format. If 'USE_ZOPFLI' variable is True,
-	zopfli is used instead of the zlib module.
-	The compression 'level' must be between 0 and 9. 1 gives best speed,
-	9 gives best compression (0 gives no compression at all).
-	The default value is a compromise between speed and compression (6).
-	"""
-	if not (0 <= level <= 9):
-		raise ValueError('Bad compression level: %s' % level)
-	if not USE_ZOPFLI or level == 0:
-		from zlib import compress
-		return compress(data, level)
-	else:
-		from zopfli.zlib import compress
-		return compress(data, numiterations=ZOPFLI_LEVELS[level])
-
-
 class SFNTWriter(object):
 
 	def __new__(cls, *args, **kwargs):
@@ -423,36 +383,6 @@ sfntDirectoryEntryFormat = """
 
 sfntDirectoryEntrySize = sstruct.calcsize(sfntDirectoryEntryFormat)
 
-woffDirectoryFormat = """
-		> # big endian
-		signature:      4s   # "wOFF"
-		sfntVersion:    4s
-		length:         L    # total woff file size
-		numTables:      H    # number of tables
-		reserved:       H    # set to 0
-		totalSfntSize:  L    # uncompressed size
-		majorVersion:   H    # major version of WOFF file
-		minorVersion:   H    # minor version of WOFF file
-		metaOffset:     L    # offset to metadata block
-		metaLength:     L    # length of compressed metadata
-		metaOrigLength: L    # length of uncompressed metadata
-		privOffset:     L    # offset to private data block
-		privLength:     L    # length of private data block
-"""
-
-woffDirectorySize = sstruct.calcsize(woffDirectoryFormat)
-
-woffDirectoryEntryFormat = """
-		> # big endian
-		tag:            4s
-		offset:         L
-		length:         L    # compressed length
-		origLength:     L    # original length
-		checkSum:       L    # original checksum
-"""
-
-woffDirectoryEntrySize = sstruct.calcsize(woffDirectoryEntryFormat)
-
 
 class DirectoryEntry(object):
 
@@ -499,61 +429,6 @@ class SFNTDirectoryEntry(DirectoryEntry):
 
 	format = sfntDirectoryEntryFormat
 	formatSize = sfntDirectoryEntrySize
-
-class WOFFDirectoryEntry(DirectoryEntry):
-
-	format = woffDirectoryEntryFormat
-	formatSize = woffDirectoryEntrySize
-	zlibCompressionLevel = ZLIB_COMPRESSION_LEVEL
-
-	def decodeData(self, rawData):
-		import zlib
-		if self.length == self.origLength:
-			data = rawData
-		else:
-			assert self.length < self.origLength
-			data = zlib.decompress(rawData)
-			assert len(data) == self.origLength
-		return data
-
-	def encodeData(self, data):
-		self.origLength = len(data)
-		if not self.uncompressed:
-			compressedData = compress(data, self.zlibCompressionLevel)
-		if self.uncompressed or len(compressedData) >= self.origLength:
-			# Encode uncompressed
-			rawData = data
-			self.length = self.origLength
-		else:
-			rawData = compressedData
-			self.length = len(rawData)
-		return rawData
-
-class WOFFFlavorData():
-
-	Flavor = 'woff'
-
-	def __init__(self, reader=None):
-		self.majorVersion = None
-		self.minorVersion = None
-		self.metaData = None
-		self.privData = None
-		if reader:
-			self.majorVersion = reader.majorVersion
-			self.minorVersion = reader.minorVersion
-			if reader.metaLength:
-				reader.file.seek(reader.metaOffset)
-				rawData = reader.file.read(reader.metaLength)
-				assert len(rawData) == reader.metaLength
-				import zlib
-				data = zlib.decompress(rawData)
-				assert len(data) == reader.metaOrigLength
-				self.metaData = data
-			if reader.privLength:
-				reader.file.seek(reader.privOffset)
-				data = reader.file.read(reader.privLength)
-				assert len(data) == reader.privLength
-				self.privData = data
 
 
 def calcChecksum(data):
