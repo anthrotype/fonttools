@@ -42,8 +42,8 @@ class WOFFWriter(SFNTWriter):
     flavor = 'woff'
 
     def __init__(self, file, numTables, sfntVersion="\000\001\000\000",
-                 flavor=None, flavorData=None):
-        super(WOFFWriter, self).__init__(file, numTables, sfntVersion)
+                 flavor="woff", flavorData=None):
+        super(WOFFWriter, self).__init__(file, numTables, sfntVersion, flavor)
 
         self.flavorData = self._newFlavorData()
         if flavorData is not None:
