@@ -242,6 +242,7 @@ class WOFFWriter(WOFFMixin, SFNTWriter):
         for entry in self.tables.values():
             entry.origOffset = offset
             offset += (entry.origLength + 3) & ~3
+        self.searchRange, self.entrySelector, self.rangeShift = getSearchRange(self.numTables, 16)
         directory = sstruct.pack(sfntDirectoryFormat, self)
         for tag, entry in sorted(self.tables.items()):
             sfntEntry = SFNTDirectoryEntry()
