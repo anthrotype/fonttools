@@ -300,7 +300,7 @@ class SFNTWriter(object):
 			raise TTLibError("cannot rewrite '%s' table" % tag)
 
 		entry = self.DirectoryEntry()
-		entry.tag = tag
+		entry.tag = Tag(tag)
 		if tag == 'head':
 			entry.checkSum = calcChecksum(data[:8] + b'\0\0\0\0' + data[12:])
 			self.headTable = data
