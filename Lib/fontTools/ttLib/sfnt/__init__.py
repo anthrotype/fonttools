@@ -34,7 +34,11 @@ class SFNTReader(object):
 			infile = args[0]
 			sfntVersion = Tag(infile.read(4))
 			infile.seek(0)
-			if sfntVersion == "wOF2":
+			if sfntVersion == "wOFF":
+				# return new WOFFReader object
+				from fontTools.ttLib.sfnt.woff import WOFFReader
+				return object.__new__(WOFFReader)
+			elif sfntVersion == "wOF2":
 				# return new WOFF2Reader object
 				from fontTools.ttLib.sfnt.woff2 import WOFF2Reader
 				return object.__new__(WOFF2Reader)
