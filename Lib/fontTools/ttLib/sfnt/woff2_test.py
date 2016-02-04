@@ -431,14 +431,11 @@ class WOFF2WriterTest(unittest.TestCase):
 		normCheckSumAdjustment = normFont['head'].checkSumAdjustment
 		self.assertEqual(normCheckSumAdjustment, w2font['head'].checkSumAdjustment)
 
-	def test_calcSFNTChecksumsLengthsAndOffsets(self):
+	def test_origChecksumsLengthsAndOffsets(self):
 		normFont = ttLib.TTFont(BytesIO(normalise_font(self.font, padding=4)))
 		for tag in self.tags:
 			self.writer[tag] = self.font.getTableData(tag)
-		self.writer._normaliseGlyfAndLoca(padding=4)
-		self.writer._setHeadTransformFlag()
-		self.writer.tables = OrderedDict(sorted(self.writer.tables.items()))
-		self.writer._calcSFNTChecksumsLengthsAndOffsets()
+		self.writer.close()
 		for tag, entry in normFont.reader.tables.items():
 			self.assertEqual(entry.offset, self.writer.tables[tag].origOffset)
 			self.assertEqual(entry.length, self.writer.tables[tag].origLength)
