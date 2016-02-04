@@ -36,7 +36,7 @@ class SFNTReader(object):
 			infile.seek(0)
 			if sfntVersion == "wOF2":
 				# return new WOFF2Reader object
-				from fontTools.ttLib.woff2 import WOFF2Reader
+				from fontTools.ttLib.sfnt.woff2 import WOFF2Reader
 				return object.__new__(WOFF2Reader)
 		# return default object
 		return object.__new__(cls)
@@ -187,7 +187,7 @@ class SFNTWriter(object):
 		if cls is SFNTWriter:
 			if flavor == "woff2":
 				# return new WOFF2Writer object
-				from fontTools.ttLib.woff2 import WOFF2Writer
+				from fontTools.ttLib.sfnt.woff2 import WOFF2Writer
 				return object.__new__(WOFF2Writer)
 		# return default object
 		return object.__new__(cls)
