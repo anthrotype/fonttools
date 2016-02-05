@@ -360,7 +360,7 @@ class WOFF2WriterTest(unittest.TestCase):
 	def setUpClass(cls):
 		cls.file = BytesIO(cls.woff2.getvalue())
 		cls.file.seek(0, 2)
-		cls.length = (cls.file.tell() + 3) & ~3
+		cls.length = cls.file.tell()
 		cls.setUpFlavorData()
 
 	@classmethod
