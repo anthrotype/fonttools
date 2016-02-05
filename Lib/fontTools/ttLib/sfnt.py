@@ -129,8 +129,8 @@ class SFNTReader(object):
 					if table.offset not in owning_font_by_offset:
 						owning_font_by_offset[table.offset] = font_idx
 					else:
-						self.reuseMap[(font_idx, table.tag)] = owning_font_by_offset[table.offset]
 						owner_idx = owning_font_by_offset[table.offset]
+						self.reuseMap[(font_idx, table.tag)] = owner_idx
 			log.debug('reuseMap from offsets: %s' % self.reuseMap) # TEMPORARY
 
 		# Load flavor data if any
@@ -284,7 +284,6 @@ class SFNTWriter(object):
 			self.numFonts = collectionSize
 			self.offsetTable = []
 			self.reuseMaps = []
-			numEntries = collectionSize
 		else:
 			assert not self.flavor, "Unknown flavor '%s'" % self.flavor
 			self.directoryFormat = sfntDirectoryFormat
