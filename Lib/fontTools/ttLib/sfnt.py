@@ -62,7 +62,7 @@ class SFNTReader(object):
 				# unpack a single font from a collection
 				log.debug('sfntVersion %s fontNumber %d offset %d' % (self.sfntVersion, fontNumber, ttcHeader.offsetTable[fontNumber]))
 				self.file.seek(ttcHeader.offsetTable[fontNumber])
-				log.debug('Read %d bytes starting at %d. End is %d. closed: %r.' % (sfntDirectorySize, self.file.tell(), len(self.file.getvalue()), self.file.closed)) # TEMPORARY
+				log.debug('Read %d bytes starting at %d' % (sfntDirectorySize, self.file.tell())) # TEMPORARY
 				data = self.file.read(sfntDirectorySize)
 				if len(data) != sfntDirectorySize:
 					from fontTools import ttLib
