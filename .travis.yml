@@ -45,6 +45,6 @@ install:
 script:
   - ./.travis/run.sh
 
-notifications:
-  irc: "irc.freenode.org##fonts"
-  email: fonttools@googlegroups.com
+# notifications:
+#   irc: "irc.freenode.org##fonts"
+#   email: fonttools@googlegroups.com
