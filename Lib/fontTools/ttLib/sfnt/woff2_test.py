@@ -354,13 +354,12 @@ class WOFF2FlavorDataTest(unittest.TestCase):
 
 class WOFF2WriterTest(unittest.TestCase):
 
+	ttx = OTX
+	woff2 = CFF_WOFF2
+
 	@classmethod
 	def setUpClass(cls):
-		cls.font = ttLib.TTFont(recalcBBoxes=False, recalcTimestamp=False, flavor="woff2")
-		cls.font.importXML(OTX)
-		cls.tags = [t for t in cls.font.keys() if t != 'GlyphOrder']
-		cls.numTables = len(cls.tags)
-		cls.file = BytesIO(CFF_WOFF2.getvalue())
+		cls.file = BytesIO(cls.woff2.getvalue())
 		cls.file.seek(0, 2)
 		cls.length = (cls.file.tell() + 3) & ~3
 		cls.setUpFlavorData()
@@ -375,7 +374,20 @@ class WOFF2WriterTest(unittest.TestCase):
 
 	def setUp(self):
 		self.file.seek(0)
+		self.font = ttLib.TTFont(recalcBBoxes=False, recalcTimestamp=False, flavor="woff2")
+		self.font.importXML(self.ttx)
+		self.tags = [t for t in self.font.keys() if t != 'GlyphOrder']
+		self.numTables = len(self.tags)
 		self.writer = WOFF2Writer(BytesIO(), self.numTables, self.font.sfntVersion)
+
+	@staticmethod
+	def writeFont(font, writer):
+		done = []
+		for tag in font.keys():
+			if tag == "GlyphOrder":
+				continue
+			font._writeTable(tag, writer, done)
+		writer.close()
 
 	def test_DSIG_dropped(self):
 		self.writer['DSIG'] = b"\0"
@@ -433,9 +445,7 @@ class WOFF2WriterTest(unittest.TestCase):
 
 	def test_origChecksumsLengthsAndOffsets(self):
 		normFont = ttLib.TTFont(BytesIO(normalise_font(self.font, padding=4)))
-		for tag in self.tags:
-			self.writer[tag] = self.font.getTableData(tag)
-		self.writer.close()
+		self.writeFont(self.font, self.writer)
 		for tag, entry in normFont.reader.tables.items():
 			self.assertEqual(entry.offset, self.writer.tables[tag].origOffset)
 			self.assertEqual(entry.length, self.writer.tables[tag].origLength)
@@ -450,10 +460,7 @@ class WOFF2WriterTest(unittest.TestCase):
 
 	def test_calcTotalSize_no_flavorData(self):
 		expected = self.length
-		self.writer.file = BytesIO()
-		for tag in self.tags:
-			self.writer[tag] = self.font.getTableData(tag)
-		self.writer.close()
+		self.writeFont(self.font, self.writer)
 		self.assertEqual(expected, self.writer.length)
 		self.assertEqual(expected, self.writer.file.tell())
 
@@ -461,10 +468,7 @@ class WOFF2WriterTest(unittest.TestCase):
 		expected = self.length + len(self.compressed_metadata)
 		flavorData = self.writer.flavorData = WOFF2FlavorData()
 		flavorData.metaData = self.xml_metadata
-		self.writer.file = BytesIO()
-		for tag in self.tags:
-			self.writer[tag] = self.font.getTableData(tag)
-		self.writer.close()
+		self.writeFont(self.font, self.writer)
 		self.assertEqual(expected, self.writer.length)
 		self.assertEqual(expected, self.writer.file.tell())
 
@@ -472,10 +476,7 @@ class WOFF2WriterTest(unittest.TestCase):
 		expected = self.length + len(self.privData)
 		flavorData = self.writer.flavorData = WOFF2FlavorData()
 		flavorData.privData = self.privData
-		self.writer.file = BytesIO()
-		for tag in self.tags:
-			self.writer[tag] = self.font.getTableData(tag)
-		self.writer.close()
+		self.writeFont(self.font, self.writer)
 		self.assertEqual(expected, self.writer.length)
 		self.assertEqual(expected, self.writer.file.tell())
 
@@ -485,10 +486,7 @@ class WOFF2WriterTest(unittest.TestCase):
 		flavorData = self.writer.flavorData = WOFF2FlavorData()
 		flavorData.metaData = self.xml_metadata
 		flavorData.privData = self.privData
-		self.writer.file = BytesIO()
-		for tag in self.tags:
-			self.writer[tag] = self.font.getTableData(tag)
-		self.writer.close()
+		self.writeFont(self.font, self.writer)
 		self.assertEqual(expected, self.writer.length)
 		self.assertEqual(expected, self.writer.file.tell())
 
@@ -508,22 +506,15 @@ class WOFF2WriterTest(unittest.TestCase):
 
 class WOFF2WriterTTFTest(WOFF2WriterTest):
 
-	@classmethod
-	def setUpClass(cls):
-		cls.font = ttLib.TTFont(recalcBBoxes=False, recalcTimestamp=False, flavor="woff2")
-		cls.font.importXML(TTX)
-		cls.tags = [t for t in cls.font.keys() if t != 'GlyphOrder']
-		cls.numTables = len(cls.tags)
-		cls.file = BytesIO(TT_WOFF2.getvalue())
-		cls.file.seek(0, 2)
-		cls.length = (cls.file.tell() + 3) & ~3
-		cls.setUpFlavorData()
+	ttx = TTX
+	woff2 = TT_WOFF2
 
 	def test_normaliseGlyfAndLoca(self):
 		normTables = {}
-		for tag in ('head', 'loca', 'glyf'):
+		transformedTags = ('head', 'loca', 'glyf')
+		for tag in transformedTags:
 			normTables[tag] = normalise_table(self.font, tag, padding=4)
-		for tag in self.tags:
+		for tag in reversed(transformedTags) + ('maxp',):
 			tableData = self.font.getTableData(tag)
 			self.writer[tag] = tableData
 			if tag in normTables:
