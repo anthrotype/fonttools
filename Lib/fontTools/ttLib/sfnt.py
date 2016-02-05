@@ -50,25 +50,33 @@ class SFNTReader(object):
 		self.DirectoryEntry = SFNTDirectoryEntry
 		self.sfntVersion = self.file.read(4)
 		self.file.seek(0)
+		self.fontNumber = fontNumber
+
 		if self.sfntVersion == b"ttcf":
-			data = self.file.read(ttcHeaderSize)
-			if len(data) != ttcHeaderSize:
+			ttcHeader = TTCHeader(self.file)
+			if not -1 <= fontNumber < ttcHeader.numFonts:
 				from fontTools import ttLib
-				raise ttLib.TTLibError("Not a Font Collection (not enough data)")
-			sstruct.unpack(ttcHeaderFormat, data, self)
-			assert self.Version == 0x00010000 or self.Version == 0x00020000, "unrecognized TTC version 0x%08x" % self.Version
-			if not 0 <= fontNumber < self.numFonts:
-				from fontTools import ttLib
-				raise ttLib.TTLibError("specify a font number between 0 and %d (inclusive)" % (self.numFonts - 1))
-			offsetTable = struct.unpack(">%dL" % self.numFonts, self.file.read(self.numFonts * 4))
-			if self.Version == 0x00020000:
-				pass # ignoring version 2.0 signatures
-			self.file.seek(offsetTable[fontNumber])
-			data = self.file.read(sfntDirectorySize)
-			if len(data) != sfntDirectorySize:
-				from fontTools import ttLib
-				raise ttLib.TTLibError("Not a Font Collection (not enough data)")
-			sstruct.unpack(sfntDirectoryFormat, data, self)
+				raise ttLib.TTLibError("specify a font number between 0 and %d (inclusive)" % (ttcHeader.numFonts - 1))
+
+			if fontNumber > -1:
+				# unpack a single font from a collection
+				print('sfntVersion %s fontNumber %d offset %d' % (self.sfntVersion, fontNumber, ttcHeader.offsetTable[fontNumber]))
+				self.file.seek(ttcHeader.offsetTable[fontNumber])
+				print('Read %d bytes starting at %d. End is %d. closed: %r.' % (sfntDirectorySize, self.file.tell(), len(self.file.getvalue()), self.file.closed)) # TEMPORARY
+				data = self.file.read(sfntDirectorySize)
+				if len(data) != sfntDirectorySize:
+					from fontTools import ttLib
+					raise ttLib.TTLibError("Not a Font Collection (not enough data)")
+				sstruct.unpack(sfntDirectoryFormat, data, self)
+			else:
+				# unpack the entire collection
+				self.fonts = []
+				for idx in range(ttcHeader.numFonts):
+					print('unpacking font %d' % idx) # TEMPORARY
+					font = SFNTReader(file, checkChecksums=checkChecksums, fontNumber=idx)
+					font.offset = ttcHeader.offsetTable[idx]
+					self.fonts.append(font)
+
 		elif self.sfntVersion == b"wOFF":
 			self.flavor = "woff"
 			self.DirectoryEntry = WOFFDirectoryEntry
@@ -85,20 +93,73 @@ class SFNTReader(object):
 			sstruct.unpack(sfntDirectoryFormat, data, self)
 		self.sfntVersion = Tag(self.sfntVersion)
 
-		if self.sfntVersion not in ("\x00\x01\x00\x00", "OTTO", "true"):
+		if self.sfntVersion not in ("\x00\x01\x00\x00", "OTTO", "true", "ttcf"):
 			from fontTools import ttLib
-			raise ttLib.TTLibError("Not a TrueType or OpenType font (bad sfntVersion)")
-		tables = {}
-		for i in range(self.numTables):
-			entry = self.DirectoryEntry()
-			entry.fromFile(self.file)
-			tag = Tag(entry.tag)
-			tables[tag] = entry
-		self.tables = OrderedDict(sorted(tables.items(), key=lambda i: i[1].offset))
+			raise ttLib.TTLibError("Not a TrueType or OpenType font (bad sfntVersion %s)" % self.sfntVersion)
+
+		def createDirectoryEntry(font, file):
+				entry = font.DirectoryEntry()
+				entry.fromFile(file)
+				return (Tag(entry.tag), entry)
+
+		self.tables = {}
+		if not self.isCollection():
+			for i in range(self.numTables):
+				(tag, entry) = createDirectoryEntry(self, self.file)
+				self.tables[entry.tag] = entry
+			self.tables = OrderedDict(sorted(self.tables.items(), key=lambda i: i[1].offset))
+		else:
+			for font_idx, font in enumerate(self.fonts):
+				self.file.seek(font.offset + sfntDirectorySize)
+				if self.file.tell() != font.offset + sfntDirectorySize:
+					from fontTools import ttLib
+					raise ttLib.TTLibError("Not a Font Collection (not enough data)")
+
+				font.tables = {}
+				for i in range(font.numTables):
+					(tag, entry) = createDirectoryEntry(font, self.file)
+					font.tables[tag] = entry
+				font.tables = OrderedDict(sorted(font.tables.items(), key=lambda i: i[1].offset))
+
+			# note which tables are reused
+			self.reuseMap = {}
+			owning_font_by_offset = {}
+			for font_idx, font in enumerate(self.fonts):
+				for table in font.tables.values():
+					if table.offset not in owning_font_by_offset:
+						owning_font_by_offset[table.offset] = font_idx
+					else:
+						self.reuseMap[(font_idx, table.tag)] = owning_font_by_offset[table.offset]
+						owner_idx = owning_font_by_offset[table.offset]
+			print('reuseMap from offsets: %s' % self.reuseMap) # TEMPORARY
 
 		# Load flavor data if any
 		if self.flavor == "woff":
 			self.flavorData = WOFFFlavorData(self)
+
+		self.tables = OrderedDict(sorted(self.tables.items(), key=lambda i: i[1].offset))
+
+		#TEMPORARY
+		if self.isCollection():
+			for idx, font in enumerate(self.fonts):
+				print('font %d numTables %d tables: %s' % (idx, font.numTables, font.keys()))
+		else:
+			print('font %d numTables %d len(self.tables) %d tables: %s' % (
+				self.fontNumber, self.numTables, len(self.tables), [(t.tag, t.offset) for t in self.tables.values()]))
+
+	def isCollection(self):
+		return self.sfntVersion == b"ttcf" and self.fontNumber == -1
+
+	def numTables(self, countReuses=False):
+		if not self.isCollection():
+			count = len(self.tables)
+		else:
+			count = 0
+			for font_idx, font in enumerate(self.fonts):
+				for table in font.tables.values():
+					if countReuses or not (font_idx, table.tag) in self.reuseMap:
+						count += 1
+		return count
 
 	def has_key(self, tag):
 		return tag in self.tables
@@ -193,12 +254,14 @@ class SFNTWriter(object):
 		return object.__new__(cls)
 
 	def __init__(self, file, numTables, sfntVersion="\000\001\000\000",
-			flavor=None, flavorData=None):
+			flavor=None, flavorData=None, collectionSize=-1):
 		self.file = file
 		self.numTables = numTables
 		self.sfntVersion = Tag(sfntVersion)
 		self.flavor = flavor
 		self.flavorData = flavorData
+		self.collectionSize = collectionSize
+		self.reuseHits = 0
 
 		if self.flavor == "woff":
 			self.directoryFormat = woffDirectoryFormat
@@ -209,6 +272,19 @@ class SFNTWriter(object):
 
 			# to calculate WOFF checksum adjustment, we also need the original SFNT offsets
 			self.origNextTableOffset = sfntDirectorySize + numTables * sfntDirectoryEntrySize
+		elif self.sfntVersion == 'ttcf':
+			if collectionSize == -1:
+				from fontTools import ttLib
+				raise ttLib.TTLibError("Must specify collectionSize for a collection")
+			self.directoryFormat = ttcHeaderFormat
+			self.directorySize = ttcHeaderSize
+			self.DirectoryEntry = SFNTDirectoryEntry
+			self.TTCTag = 'ttcf'
+			self.Version = 0x00010000
+			self.numFonts = collectionSize
+			self.offsetTable = []
+			self.reuseMaps = []
+			numEntries = collectionSize
 		else:
 			assert not self.flavor, "Unknown flavor '%s'" % self.flavor
 			self.directoryFormat = sfntDirectoryFormat
@@ -218,21 +294,47 @@ class SFNTWriter(object):
 			self.searchRange, self.entrySelector, self.rangeShift = getSearchRange(numTables, 16)
 
 		self.nextTableOffset = self.directorySize + numTables * self.DirectoryEntry.formatSize
+		if self.sfntVersion == 'ttcf':
+			self.nextTableOffset = self.directorySize + collectionSize * ttcOffsetTableEntrySize
+
+		print('dirSz %d collectionSize %d numTables %d dirFmtSz %d nextOffset %d' % (
+			self.directorySize, self.collectionSize, self.numTables, self.DirectoryEntry.formatSize, self.nextTableOffset)) # TEMPORARY
 		# clear out directory area
 		self.file.seek(self.nextTableOffset)
 		# make sure we're actually where we want to be. (old cStringIO bug)
 		self.file.write(b'\0' * (self.nextTableOffset - self.file.tell()))
 		self.tables = OrderedDict()
+		self.fontIndex = -1
+
+	def _isCollection(self):
+		return self.sfntVersion == 'ttcf'
+
+	def startCollectionFont(self, numTables, reuseMap):
+		self.fontIndex += 1
+		self.offsetTable.append(self.file.tell())
+		self.reuseMaps.append(reuseMap)
+
+		self.nextTableOffset += sfntDirectorySize + numTables * sfntDirectoryEntrySize
+		print('write %d 0s at %d to reserve space for font %d directory of %d tables' % (
+				self.nextTableOffset - self.file.tell(), self.file.tell(), self.fontIndex, numTables))
+		self.file.write(b'\0' * (self.nextTableOffset - self.file.tell()))
 
 	def __setitem__(self, tag, data):
 		"""Write raw table data to disk."""
-		if tag in self.tables:
+		reuseMap = self.reuseMaps[self.fontIndex]
+		if self._isCollection() and tag in reuseMap:
+			key = (self.reuseMaps[self.fontIndex][tag], tag)
+			self.tables[(self.fontIndex, tag)] = self.tables[key]
+			return
+
+		if (self.fontIndex, tag) in self.tables:
 			from fontTools import ttLib
 			raise ttLib.TTLibError("cannot rewrite '%s' table" % tag)
 
 		entry = self.DirectoryEntry()
 		entry.tag = tag
 		entry.offset = self.nextTableOffset
+		print('%s starts at %d' % (tag, entry.offset)) # TEMPORARY
 		if tag == 'head':
 			entry.checkSum = calcChecksum(data[:8] + b'\0\0\0\0' + data[12:])
 			self.headTable = data
@@ -253,7 +355,7 @@ class SFNTWriter(object):
 		self.file.write(b'\0' * (self.nextTableOffset - self.file.tell()))
 		assert self.nextTableOffset == self.file.tell()
 
-		self.tables[tag] = entry
+		self.tables[(self.fontIndex, tag)] = entry
 
 	def close(self):
 		"""All tables must have been written to disk. Now write the
@@ -310,24 +412,59 @@ class SFNTWriter(object):
 			pass
 
 		directory = sstruct.pack(self.directoryFormat, self)
+		if self._isCollection():
+			if len(self.offsetTable) != self.collectionSize:
+				from fontTools import ttLib
+				raise ttLib.TTLibError("Wrong number of offsets. Got %d, expected %d" % (len(self.offsetTable), self.collectionSize))
+			if len(self.reuseMaps) != self.collectionSize:
+				from fontTools import ttLib
+				raise ttLib.TTLibError("Wrong number of reuse maps. Got %d, expected %d" % (len(self.reuseMaps), self.collectionSize))
+			for offset in self.offsetTable:
+				directory += struct.pack('>L', offset)
+			self.file.seek(0)
+			self.file.write(directory)
 
-		self.file.seek(self.directorySize)
-		seenHead = 0
-		for tag, entry in tables:
-			if tag == "head":
-				seenHead = 1
-			directory = directory + entry.toString()
-		if seenHead:
-			self.writeMasterChecksum(directory)
-		self.file.seek(0)
-		self.file.write(directory)
+			# Drop in the table headers for each font, including reused tables.
+			for fontIndex in range(self.collectionSize):
+				tables = [table for (i, _), table in self.tables.iteritems() if fontIndex == i]
+				reuseMap = self.reuseMaps[fontIndex]
+
+				# write a sfnt directory
+				sfntDir = SFNTDirectory()
+				sfntDir.numTables = len(tables)
+				sfntDir.updateDerivedFields()
+
+				print('font %d has %d tables (%d tables, %d reused)' % (fontIndex, sfntDir.numTables, len(tables), len(reuseMap)))
+				print('reuse for %d: %s' % (fontIndex, reuseMap))
+				print('sfntDir %d: %s' % (fontIndex, sfntDir))
+				self.file.seek(self.offsetTable[fontIndex])
+				self.file.write(sstruct.pack(sfntDirectoryFormat, sfntDir))
+				print('Wrote %d byte directory at %d for font %d' % (self.file.tell() - self.offsetTable[fontIndex], self.offsetTable[fontIndex], fontIndex))
+
+				for table in tables:
+					self.file.write(table.toString())
+
+		# checksums aren't well defined for collections
+		# TODO: something reasonable. 0s?
+		if not self._isCollection():
+			self.file.seek(self.directorySize)
+			seenHead = 0
+			for tag, entry in tables:
+				if tag == "head":
+					seenHead = 1
+				directory = directory + entry.toString()
+			if seenHead:
+				self.writeMasterChecksum(directory)
+			self.file.seek(0)
+			self.file.write(directory)
+
 
 	def _calcMasterChecksum(self, directory):
 		# calculate checkSumAdjustment
-		tags = list(self.tables.keys())
+		keys = list(self.tables.keys())
 		checksums = []
-		for i in range(len(tags)):
-			checksums.append(self.tables[tags[i]].checkSum)
+		for i in range(len(keys)):
+			checksums.append(self.tables[keys[i]].checkSum)
 
 		if self.DirectoryEntry != SFNTDirectoryEntry:
 			# Create a SFNT directory for checksum calculation purposes
@@ -354,8 +491,14 @@ class SFNTWriter(object):
 	def writeMasterChecksum(self, directory):
 		checksumadjustment = self._calcMasterChecksum(directory)
 		# write the checksum to the file
-		self.file.seek(self.tables['head'].offset + 8)
-		self.file.write(struct.pack(">L", checksumadjustment))
+		# Writes for all 'head' if this is a collection
+		heads = [table for (_, tag), table in self.tables.iteritems() if tag == 'head']
+		if not heads:
+			from fontTools import ttLib
+			raise ttLib.TTLibError("At least one 'head' table expected")
+		for head in heads:
+			self.file.seek(table.offset + 8)
+			self.file.write(struct.pack(">L", checksumadjustment))
 
 	def reordersTables(self):
 		return False
@@ -375,6 +518,8 @@ ttcHeaderFormat = """
 """
 
 ttcHeaderSize = sstruct.calcsize(ttcHeaderFormat)
+
+ttcOffsetTableEntrySize = 4  # ULong offset for each font
 
 sfntDirectoryFormat = """
 		> # big endian
@@ -432,6 +577,7 @@ class DirectoryEntry(object):
 
 	def __init__(self):
 		self.uncompressed = False # if True, always embed entry raw
+		self.reuse_from = None
 
 	def fromFile(self, file):
 		sstruct.unpack(self.format, file.read(self.formatSize), self)
@@ -468,6 +614,10 @@ class DirectoryEntry(object):
 
 	def encodeData(self, data):
 		return data
+
+class TTCHeaderEntry(DirectoryEntry):
+	format = ttcHeaderFormat
+	formatSize = ttcOffsetTableEntrySize
 
 class SFNTDirectoryEntry(DirectoryEntry):
 
@@ -529,6 +679,30 @@ class WOFFFlavorData():
 				assert len(data) == reader.privLength
 				self.privData = data
 
+class SFNTDirectory():
+	def __init__(self):
+		self.sfntVersion = Tag("\000\001\000\000")
+		self.numTables = 0
+		self.searchRange = 0
+		self.entrySelector = 0
+		self.rangeShift = 0
+
+	def updateDerivedFields(self):
+		self.searchRange, self.entrySelector, self.rangeShift = getSearchRange(self.numTables, 16)
+
+class TTCHeader():
+	def __init__(self, file):
+		file.seek(0)
+		data = file.read(ttcHeaderSize)
+		if len(data) != ttcHeaderSize:
+			from fontTools import ttLib
+			raise ttLib.TTLibError("Not a Font Collection (not enough data)")
+		sstruct.unpack(ttcHeaderFormat, data, self)
+		self.offsetTable = struct.unpack(">%dL" % self.numFonts, file.read(self.numFonts * 4))
+		assert self.Version == 0x00010000 or self.Version == 0x00020000, "unrecognized TTC version 0x%08x" % self.Version
+		if self.Version == 0x00020000:
+			# ignoring version 2.0 signatures
+			pass
 
 def calcChecksum(data):
 	"""Calculate the checksum for an arbitrary block of data.

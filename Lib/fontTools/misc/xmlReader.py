@@ -3,6 +3,7 @@ from fontTools.misc.py23 import *
 from fontTools import ttLib
 from fontTools.misc.textTools import safeEval
 from fontTools.ttLib.tables.DefaultTable import DefaultTable
+from fontTools.ttLib import TTFont
 import os
 import logging
 
@@ -26,7 +27,8 @@ class XMLReader(object):
 			# assume readable file object
 			self.file = fileOrPath
 			self._closeStream = False
-		self.ttFont = ttFont
+		self.rootFont = ttFont
+		self.currentFont = ttFont
 		self.progress = progress
 		if quiet is not None:
 			from fontTools.misc.loggingTools import deprecateArgument
@@ -35,6 +37,9 @@ class XMLReader(object):
 		self.root = None
 		self.contentStack = []
 		self.stackSize = 0
+		self.fontDepth = 0
+		self.tableDepth = 1
+		self.tablePropertyDepth = 2
 
 	def read(self):
 		if self.progress:
@@ -67,19 +72,40 @@ class XMLReader(object):
 				self.progress.set(pos // 100)
 			parser.Parse(chunk, 0)
 
+	def _startNewFont(self):
+		return TTFont(flavor=self.rootFont.flavor,
+       recalcBBoxes=self.rootFont.recalcBBoxes,
+       recalcTimestamp=self.rootFont.recalcTimestamp,
+       verbose=self.rootFont.verbose, allowVID=self.rootFont.allowVID)
+
 	def _startElementHandler(self, name, attrs):
 		stackSize = self.stackSize
 		self.stackSize = stackSize + 1
-		if not stackSize:
+		if stackSize <= self.fontDepth:
 			if name != "ttFont":
 				raise TTXParseError("illegal root tag: %s" % name)
+
+			if stackSize == 1:
+				self.currentFont = self._startNewFont()
+				self.rootFont.fonts.append(self.currentFont)
+
+
 			sfntVersion = attrs.get("sfntVersion")
 			if sfntVersion is not None:
 				if len(sfntVersion) != 4:
 					sfntVersion = safeEval('"' + sfntVersion + '"')
-				self.ttFont.sfntVersion = sfntVersion
+				self.currentFont.sfntVersion = sfntVersion
 			self.contentStack.append([])
-		elif stackSize == 1:
+
+			if sfntVersion == 'ttcf':
+				print('Adjusting depths for collection') # TEMPORARY
+				self.rootFont.fonts = []
+				self.rootFont.reuseMap = {}
+				self.fontDepth = 1
+				self.tableDepth = 2
+				self.tablePropertyDepth = 3
+
+		elif stackSize == self.tableDepth:
 			subFile = attrs.get("src")
 			if subFile is not None:
 				if hasattr(self.file, 'name'):
@@ -93,11 +119,27 @@ class XMLReader(object):
 				subReader.read()
 				self.contentStack.append([])
 				return
+
+			reuse_from = attrs.get("reuse_from")
 			tag = ttLib.xmlToTag(name)
 			msg = "Parsing '%s' table..." % tag
+			if reuse_from is not None:
+				reuse_from = int(reuse_from)
+				if not -1 < reuse_from < len(self.rootFont.fonts):
+					raise TTXParseError("Table '%s' illegal reuse_from %d" % (tag, reuse_from))
+				msg = "Reusing '%s' table from font %d..." % (tag, reuse_from)
 			if self.progress:
 				self.progress.setLabel(msg)
 			log.info(msg)
+
+			if reuse_from is not None:
+				self.currentFont[tag] = self.rootFont.fonts[reuse_from][tag]
+				self.contentStack.append([])
+
+				reuse_key = (len(self.rootFont.fonts) - 1, tag)
+				self.rootFont.reuseMap[reuse_key] = reuse_from
+				return
+
 			if tag == "GlyphOrder":
 				tableClass = ttLib.GlyphOrder
 			elif "ERROR" in attrs or ('raw' in attrs and safeEval(attrs['raw'])):
@@ -106,15 +148,15 @@ class XMLReader(object):
 				tableClass = ttLib.getTableClass(tag)
 				if tableClass is None:
 					tableClass = DefaultTable
-			if tag == 'loca' and tag in self.ttFont:
+			if tag == 'loca' and tag in self.currentFont:
 				# Special-case the 'loca' table as we need the
 				#    original if the 'glyf' table isn't recompiled.
-				self.currentTable = self.ttFont[tag]
+				self.currentTable = self.currentFont[tag]
 			else:
 				self.currentTable = tableClass(tag)
-				self.ttFont[tag] = self.currentTable
+				self.currentFont[tag] = self.currentTable
 			self.contentStack.append([])
-		elif stackSize == 2:
+		elif stackSize == self.tablePropertyDepth:
 			self.contentStack.append([])
 			self.root = (name, attrs, self.contentStack[-1])
 		else:
@@ -129,11 +171,11 @@ class XMLReader(object):
 	def _endElementHandler(self, name):
 		self.stackSize = self.stackSize - 1
 		del self.contentStack[-1]
-		if self.stackSize == 1:
+		if self.stackSize == self.tableDepth:
 			self.root = None
-		elif self.stackSize == 2:
+		elif self.stackSize == self.tablePropertyDepth:
 			name, attrs, content = self.root
-			self.currentTable.fromXML(name, attrs, content, self.ttFont)
+			self.currentTable.fromXML(name, attrs, content, self.currentFont)
 			self.root = None
 
 

@@ -272,7 +272,11 @@ def ttCompile(input, output, options):
 	if not options.recalcTimestamp:
 		# use TTX file modification time for head "modified" timestamp
 		mtime = os.path.getmtime(input)
-		ttf['head'].modified = timestampSinceEpoch(mtime)
+		if ttf.isCollection():
+			for font in ttf.fonts:
+				font['head'].modified = timestampSinceEpoch(mtime)
+		else:
+			ttf['head'].modified = timestampSinceEpoch(mtime)
 
 	ttf.save(output)
 

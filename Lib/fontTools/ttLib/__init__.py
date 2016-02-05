@@ -65,7 +65,7 @@ class TTFont(object):
 	def __init__(self, file=None, res_name_or_index=None,
 			sfntVersion="\000\001\000\000", flavor=None, checkChecksums=False,
 			verbose=None, recalcBBoxes=True, allowVID=False, ignoreDecompileErrors=False,
-			recalcTimestamp=True, fontNumber=-1, lazy=None, quiet=None):
+			recalcTimestamp=True, fontNumber=-1, lazy=None, quiet=None, reader=None):
 
 		"""The constructor can be called with a few different arguments.
 		When reading a font from disk, 'file' should be either a pathname
@@ -130,11 +130,12 @@ class TTFont(object):
 				deprecateArgument(name, "configure logging instead")
 			setattr(self, name, val)
 
+		self.fonts = None
 		self.lazy = lazy
 		self.recalcBBoxes = recalcBBoxes
 		self.recalcTimestamp = recalcTimestamp
 		self.tables = {}
-		self.reader = None
+		self.reader = reader
 
 		# Permit the user to reference glyphs that are not int the font.
 		self.last_vid = 0xFFFE # Can't make it be 0xFFFF, as the world is full unsigned short integer counters that get incremented after the last seen GID value.
@@ -143,49 +144,79 @@ class TTFont(object):
 		self.allowVID = allowVID
 		self.ignoreDecompileErrors = ignoreDecompileErrors
 
-		if not file:
+		if file and reader:
+			from fontTools import ttLib
+			raise ttLib.TTLibError("Please provide only one of file and reader")
+
+		if not file and not reader:
 			self.sfntVersion = sfntVersion
 			self.flavor = flavor
 			self.flavorData = None
 			return
-		if not hasattr(file, "read"):
-			closeStream = True
-			# assume file is a string
-			if res_name_or_index is not None:
-				# see if it contains 'sfnt' resources in the resource or data fork
-				from . import macUtils
-				if res_name_or_index == 0:
-					if macUtils.getSFNTResIndices(file):
-						# get the first available sfnt font.
-						file = macUtils.SFNTResourceReader(file, 1)
+		if file:
+			if not hasattr(file, "read"):
+				closeStream = True
+				# assume file is a string
+				if res_name_or_index is not None:
+					# see if it contains 'sfnt' resources in the resource or data fork
+					from . import macUtils
+					if res_name_or_index == 0:
+						if macUtils.getSFNTResIndices(file):
+							# get the first available sfnt font.
+							file = macUtils.SFNTResourceReader(file, 1)
+						else:
+							file = open(file, "rb")
 					else:
-						file = open(file, "rb")
+						file = macUtils.SFNTResourceReader(file, res_name_or_index)
 				else:
-					file = macUtils.SFNTResourceReader(file, res_name_or_index)
-			else:
-				file = open(file, "rb")
+					file = open(file, "rb")
 
+			else:
+				# assume "file" is a readable file object
+				closeStream = False
+			if not self.lazy:
+				# read input file in memory and wrap a stream around it to allow overwriting
+				tmp = BytesIO(file.read())
+				if hasattr(file, 'name'):
+					# save reference to input file name
+					tmp.name = file.name
+				if closeStream:
+					file.close()
+				file = tmp
+
+		if reader:
+			self.reader = reader
 		else:
-			# assume "file" is a readable file object
-			closeStream = False
-		if not self.lazy:
-			# read input file in memory and wrap a stream around it to allow overwriting
-			tmp = BytesIO(file.read())
-			if hasattr(file, 'name'):
-				# save reference to input file name
-				tmp.name = file.name
-			if closeStream:
-				file.close()
-			file = tmp
-		self.reader = sfnt.SFNTReader(file, checkChecksums, fontNumber=fontNumber)
+			self.reader = sfnt.SFNTReader(file, checkChecksums, fontNumber=fontNumber)
+
 		self.sfntVersion = self.reader.sfntVersion
 		self.flavor = self.reader.flavor
 		self.flavorData = self.reader.flavorData
+		if self.isCollection():
+			self.fonts = []
+			self.reuseMap = self.reader.reuseMap
+			for reader in self.reader.fonts:
+				font = TTFont(res_name_or_index=res_name_or_index,
+										  checkChecksums=checkChecksums,
+										  verbose=verbose,
+										  recalcBBoxes=recalcBBoxes,
+										  allowVID=allowVID,
+										  ignoreDecompileErrors=ignoreDecompileErrors,
+										  recalcTimestamp=recalcTimestamp,
+										  lazy=lazy,
+										  quiet=quiet,
+										  reader=reader)
+				self.fonts.append(font)
 
 	def close(self):
 		"""If we still have a reader object, close it."""
 		if self.reader is not None:
 			self.reader.close()
+		# if we are a collection, close out nested fonts
+		if self.fonts is not None:
+			for font in self.fonts:
+				if font:
+					font.close()
 
 	def save(self, file, reorderTables=True):
 		"""Save the font to disk. Similarly to the constructor,
@@ -203,19 +234,41 @@ class TTFont(object):
 			# assume "file" is a writable file object
 			closeStream = False
 
-		tags = list(self.keys())
-		if "GlyphOrder" in tags:
-			tags.remove("GlyphOrder")
-		numTables = len(tags)
+		collectionSize = -1
+		if not self.isCollection():
+			tags = self._tablesToSave()
+			numTables = len(tags)
+		else:
+			numTables = sum([len(self._tablesToSave(i)) for i in range(len(self.fonts))])
+			collectionSize = len(self.fonts)
+
+		log.debug('save tmp font with %d entries' % numTables) # TEMPORARY
+
 		# write to a temporary stream to allow saving to unseekable streams
 		tmp = BytesIO()
-		writer = sfnt.SFNTWriter(tmp, numTables, self.sfntVersion, self.flavor, self.flavorData)
+		writer = sfnt.SFNTWriter(tmp, numTables, self.sfntVersion, self.flavor, self.flavorData, collectionSize=collectionSize)
 
-		done = []
-		for tag in tags:
-			self._writeTable(tag, writer, done)
+		if not self.isCollection():
+			done = []
+			for tag in tags:
+				self._writeTable(tag, writer, done)
+		else:
+			self._throwIfBadReuseMap()
+			for fontIndex in range(len(self.fonts)):
+				self._writeCollectionFont(fontIndex, writer)
 
 		writer.close()
+
+		# TEMPORARY
+		log.debug('offset table after writer.close()')
+		for fontIndex in range(len(self.fonts)):
+			import struct
+			log.debug('  offsetTable[%d] = %s' % (fontIndex, struct.unpack_from('>L', tmp.getvalue(), 12 + 4 * fontIndex)))
+
+		log.debug('Wrote tmp font with %d entries' % numTables) # TEMPORARY
+		with open('/tmp/tmp.ttc', 'wb') as f:
+			f.write(tmp.getvalue())
+		log.debug('Saved /tmp/tmp.ttc; %d bytes' % os.stat('/tmp/tmp.ttc').st_size)
 
 		if (reorderTables is None or writer.reordersTables() or
 				(reorderTables is False and self.reader is None)):
@@ -223,6 +276,7 @@ class TTFont(object):
 			file.write(tmp.getvalue())
 			tmp.close()
 		else:
+			log.debug('reordering tables') # TEMPORARY
 			if reorderTables is False:
 				# sort tables using the original font's order
 				tableOrder = list(self.reader.keys())
@@ -232,13 +286,34 @@ class TTFont(object):
 			tmp.flush()
 			tmp.seek(0)
 			tmp2 = BytesIO()
-			reorderFontTables(tmp, tmp2, tableOrder)
+			reorderFontTables(tmp, tmp2, tableOrder, collectionSize=collectionSize)
 			file.write(tmp2.getvalue())
 			tmp.close()
 			tmp2.close()
 
 		if closeStream:
 			file.close()
+
+		log.debug('END of save()') # TEMPORARY
+
+	def _tablesToSave(self, fontIndex=-1):
+		if fontIndex == -1:
+			tags = list(self.keys())
+		else:
+			font = self.fonts[fontIndex]
+			tags = [t for t in font.keys()]
+		if "GlyphOrder" in tags:
+			tags.remove("GlyphOrder")
+		return tags
+
+	def isCollection(self):
+		return self.sfntVersion == b'ttcf'
+
+	def _reuseMap(self, fontIndex):
+		if not -1 < fontIndex < len(self.fonts):
+			from fontTools import ttLib
+			raise ttLib.TTLibError("Invalid font index %d; only %d in collection" % (fontIndex, len(self.fonts)))
+		return reuseMapForFont(self.reuseMap, fontIndex)
 
 	def saveXML(self, fileOrPath, progress=None, quiet=None,
 			tables=None, skipTables=None, splitTables=False, disassembleInstructions=True,
@@ -250,22 +325,21 @@ class TTFont(object):
 		list of tables to dump. The 'skipTables' argument may be a list of tables
 		to skip, but only when the 'tables' argument is false.
 		"""
-		from fontTools import version
 		from fontTools.misc import xmlWriter
 
 		if quiet is not None:
 			deprecateArgument("quiet", "configure logging instead")
 
-		self.disassembleInstructions = disassembleInstructions
-		self.bitmapGlyphDataFormat = bitmapGlyphDataFormat
+		if self.isCollection():
+			for idx, font in enumerate(self.fonts):
+				font.disassembleInstructions = disassembleInstructions
+				font.bitmapGlyphDataFormat = bitmapGlyphDataFormat
+		else:
+			self.disassembleInstructions = disassembleInstructions
+			self.bitmapGlyphDataFormat = bitmapGlyphDataFormat
+
 		if not tables:
-			tables = list(self.keys())
-			if "GlyphOrder" not in tables:
-				tables = ["GlyphOrder"] + tables
-			if skipTables:
-				for tag in skipTables:
-					if tag in tables:
-						tables.remove(tag)
+			tables = self._tables(skipTables=skipTables)
 		numTables = len(tables)
 		if progress:
 			progress.set(0, numTables)
@@ -273,7 +347,41 @@ class TTFont(object):
 		else:
 			idlefunc = None
 
+		log.debug('saveXML tables %s' % tables) # TEMPORARY
+
 		writer = xmlWriter.XMLWriter(fileOrPath, idlefunc=idlefunc)
+		if self.isCollection():
+			from fontTools import version
+			writer.begintag("ttFont", sfntVersion=repr(self.sfntVersion)[1:-1],
+					ttLibVersion=version)
+			writer.newline()
+
+			for index, font in enumerate(self.fonts):
+				log.debug('create xml for font %d' % index)
+				font._singleFontToXML(writer, progress, quiet, font._tables(skipTables),
+						splitTables, reuseMap=self._reuseMap(index))
+
+			writer.endtag("ttFont")
+			writer.newline()
+		else:
+			self._singleFontToXML(writer, progress, quiet, tables, splitTables)
+
+		writer.close()
+		if self.verbose:
+			debugmsg("Done dumping TTX")
+
+	def _tables(self, skipTables=None):
+		tables = list(self.keys())
+		if not self.isCollection() and "GlyphOrder" not in tables:
+			tables = ["GlyphOrder"] + tables
+		if skipTables:
+			for tag in skipTables:
+				if tag in tables:
+					tables.remove(tag)
+		return tables
+
+	def _singleFontToXML(self, writer, progress, quiet, tables, splitTables, reuseMap={}):
+		from fontTools import version
 		writer.begintag("ttFont", sfntVersion=repr(self.sfntVersion)[1:-1],
 				ttLibVersion=version)
 		writer.newline()
@@ -285,7 +393,9 @@ class TTFont(object):
 			path, ext = os.path.splitext(fileOrPath)
 			fileNameTemplate = path + ".%s" + ext
 
-		for i in range(numTables):
+		log.debug('_singleFontToXML tables %s' % tables) # TEMPORARY
+
+		for i in range(len(tables)):
 			if progress:
 				progress.set(i)
 			tag = tables[i]
@@ -299,7 +409,7 @@ class TTFont(object):
 				writer.newline()
 			else:
 				tableWriter = writer
-			self._tableToXML(tableWriter, tag, progress)
+			self._tableToXML(tableWriter, tag, progress, reuseMap.get(tag, -1))
 			if splitTables:
 				tableWriter.endtag("ttFont")
 				tableWriter.newline()
@@ -312,7 +422,7 @@ class TTFont(object):
 		if not hasattr(fileOrPath, "write"):
 			writer.close()
 
-	def _tableToXML(self, writer, tag, progress, quiet=None):
+	def _tableToXML(self, writer, tag, progress, quiet=None, reuse_from=-1):
 		if quiet is not None:
 			deprecateArgument("quiet", "configure logging instead")
 		if tag in self:
@@ -329,15 +439,18 @@ class TTFont(object):
 		attrs = dict()
 		if hasattr(table, "ERROR"):
 			attrs['ERROR'] = "decompilation error"
+		if reuse_from > -1:
+			attrs['reuse_from'] = reuse_from
 		from .tables.DefaultTable import DefaultTable
 		if table.__class__ == DefaultTable:
 			attrs['raw'] = True
 		writer.begintag(xmlTag, **attrs)
 		writer.newline()
-		if tag in ("glyf", "CFF "):
-			table.toXML(writer, self, progress)
-		else:
-			table.toXML(writer, self)
+		if reuse_from == -1:
+			if tag in ("glyf", "CFF "):
+				table.toXML(writer, self, progress)
+			else:
+				table.toXML(writer, self)
 		writer.endtag(xmlTag)
 		writer.newline()
 		writer.newline()
@@ -360,6 +473,12 @@ class TTFont(object):
 
 		reader = xmlReader.XMLReader(fileOrPath, self, progress)
 		reader.read()
+
+		log.debug('DONE reading XML') # TEMPORARY
+		log.debug('%d fonts. root keys: %s' % (len(self.fonts), self.keys()))
+		log.debug('reuseMap %s' % self.reuseMap)
+		for index, font in enumerate(self.fonts):
+			log.debug('  %d keys %s' % (index, font.keys()))
 
 	def isLoaded(self, tag):
 		"""Return true if the table identified by 'tag' has been
@@ -388,7 +507,9 @@ class TTFont(object):
 		if "GlyphOrder" in keys:
 			keys.remove("GlyphOrder")
 		keys = sortedTagList(keys)
-		return ["GlyphOrder"] + keys
+		if not self.isCollection():
+			keys = ["GlyphOrder"] + keys
+		return keys
 
 	def __len__(self):
 		return len(list(self.keys()))
@@ -631,6 +752,26 @@ class TTFont(object):
 		glyphOrder = self.getGlyphOrder()
 		for glyphID in range(len(glyphOrder)):
 			d[glyphOrder[glyphID]] = glyphID
+
+	def _throwIfBadReuseMap(self):
+		# sanity check the reuse map: it should only contain backrefs
+		bad_reuse = [(k,v) for k,v in self.reuseMap.iteritems() if k[0] <= v]
+		if bad_reuse:
+			raise TTLibError('reuseMap can only contain backrefs; following are illegal: %s' % bad_reuse)
+
+	def _writeCollectionFont(self, fontIndex, writer):
+		if self.verbose:
+			debugmsg("writing font %d to disk" % fontIndex)
+
+		font = self.fonts[fontIndex]
+
+		log.debug('font %d save %s, reuse %s' % (fontIndex, self._tablesToSave(fontIndex), self._reuseMap(fontIndex))) # TEMPORARY
+
+		writer.startCollectionFont(len(self._tablesToSave(fontIndex)), self._reuseMap(fontIndex))
+		done = []
+		for tag in self._tablesToSave(fontIndex):
+			font._writeTable(tag, writer, done)
+
 
 	def _writeTable(self, tag, writer, done):
 		"""Internal helper function for self.save(). Keeps track of
@@ -948,17 +1089,36 @@ def sortedTagList(tagList, tableOrder=None):
 	return orderedTables
 
 
-def reorderFontTables(inFile, outFile, tableOrder=None, checkChecksums=False):
+def reuseMapForFont(reuseMap, fontIndex):
+	return {tag: to_index for (from_index, tag), to_index in reuseMap.iteritems()
+					if from_index == fontIndex}
+
+
+def reorderFontTables(inFile, outFile, tableOrder=None, checkChecksums=False, collectionSize=-1):
 	"""Rewrite a font file, ordering the tables as recommended by the
 	OpenType specification 1.4.
 	"""
 	from fontTools.ttLib.sfnt import SFNTReader, SFNTWriter
+	log.debug('reloading font to reorder') # TEMPORARY
 	reader = SFNTReader(inFile, checkChecksums=checkChecksums)
-	writer = SFNTWriter(outFile, len(reader.tables), reader.sfntVersion, reader.flavor, reader.flavorData)
-	tables = list(reader.keys())
-	for tag in sortedTagList(tables, tableOrder):
-		writer[tag] = reader[tag]
+	log.debug('preparing writer for reorder') # TEMPORARY
+	writer = SFNTWriter(outFile, reader.numTables(countReuses=True),
+			reader.sfntVersion, reader.flavor, reader.flavorData,
+			collectionSize=collectionSize)
+	if not reader.isCollection():
+		tables = list(reader.keys())
+		for tag in sortedTagList(tables, tableOrder):
+			writer[tag] = reader[tag]
+	else:
+		for fontIndex, font in enumerate(reader.fonts):
+			writer.startCollectionFont(len(font.keys()),
+										 reuseMapForFont(reader.reuseMap, fontIndex))
+			tables = list(font.keys())
+			for tag in sortedTagList(tables, tableOrder):
+				writer[tag] = font[tag]
+	log.debug('closing writer for reorder') # TEMPORARY
 	writer.close()
+	log.debug('done with reorder') # TEMPORARY
 
 
 def maxPowerOfTwo(x):
@@ -982,3 +1142,4 @@ def getSearchRange(n, itemSize=16):
 	entrySelector = exponent
 	rangeShift = max(0, n * itemSize - searchRange)
 	return searchRange, entrySelector, rangeShift
+
