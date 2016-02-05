@@ -74,9 +74,9 @@ class XMLReader(object):
 
 	def _startNewFont(self):
 		return TTFont(flavor=self.rootFont.flavor,
-       recalcBBoxes=self.rootFont.recalcBBoxes,
-       recalcTimestamp=self.rootFont.recalcTimestamp,
-       verbose=self.rootFont.verbose, allowVID=self.rootFont.allowVID)
+					recalcBBoxes=self.rootFont.recalcBBoxes,
+					recalcTimestamp=self.rootFont.recalcTimestamp,
+					allowVID=self.rootFont.allowVID)
 
 	def _startElementHandler(self, name, attrs):
 		stackSize = self.stackSize
