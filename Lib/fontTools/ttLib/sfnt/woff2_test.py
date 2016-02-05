@@ -513,7 +513,7 @@ class WOFF2WriterTTFTest(WOFF2WriterTest):
 		transformedTags = ('head', 'loca', 'glyf')
 		for tag in transformedTags:
 			normTables[tag] = normalise_table(self.font, tag, padding=4)
-		for tag in reversed(transformedTags) + ('maxp',):
+		for tag in tuple(reversed(transformedTags)) + ('maxp',):
 			tableData = self.font.getTableData(tag)
 			self.writer[tag] = tableData
 			if tag in normTables:
