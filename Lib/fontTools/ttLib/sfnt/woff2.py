@@ -407,7 +407,7 @@ class WOFF2Writer(WOFF2Mixin, WOFFWriter):
 		"""Calculate checkSumAdjustment."""
 		# we also need to compute the 'original' SFNT checksums
 		for tag, entry in self.tables.items():
-			entry.checkSum = self._calcTableChecksum(entry.tag, entry.data)
+			entry.checkSum = self._calcTableChecksum(tag, entry.data)
 		return super(WOFF2Writer, self)._calcMasterChecksum(b"")
 
 	def _writeMasterChecksum(self):
