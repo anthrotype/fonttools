@@ -11,7 +11,6 @@ from fontTools.misc import sstruct
 import os
 import random
 import copy
-from collections import OrderedDict
 
 haveBrotli = False
 try:
