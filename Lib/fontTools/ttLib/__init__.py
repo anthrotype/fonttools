@@ -266,9 +266,6 @@ class TTFont(object):
 			log.debug('  offsetTable[%d] = %s' % (fontIndex, struct.unpack_from('>L', tmp.getvalue(), 12 + 4 * fontIndex)))
 
 		log.debug('Wrote tmp font with %d entries' % numTables) # TEMPORARY
-		with open('/tmp/tmp.ttc', 'wb') as f:
-			f.write(tmp.getvalue())
-		log.debug('Saved /tmp/tmp.ttc; %d bytes' % os.stat('/tmp/tmp.ttc').st_size)
 
 		if (reorderTables is None or writer.reordersTables() or
 				(reorderTables is False and self.reader is None)):
