@@ -60,9 +60,9 @@ class SFNTReader(object):
 
 			if fontNumber > -1:
 				# unpack a single font from a collection
-				print('sfntVersion %s fontNumber %d offset %d' % (self.sfntVersion, fontNumber, ttcHeader.offsetTable[fontNumber]))
+				log.debug('sfntVersion %s fontNumber %d offset %d' % (self.sfntVersion, fontNumber, ttcHeader.offsetTable[fontNumber]))
 				self.file.seek(ttcHeader.offsetTable[fontNumber])
-				print('Read %d bytes starting at %d. End is %d. closed: %r.' % (sfntDirectorySize, self.file.tell(), len(self.file.getvalue()), self.file.closed)) # TEMPORARY
+				log.debug('Read %d bytes starting at %d. End is %d. closed: %r.' % (sfntDirectorySize, self.file.tell(), len(self.file.getvalue()), self.file.closed)) # TEMPORARY
 				data = self.file.read(sfntDirectorySize)
 				if len(data) != sfntDirectorySize:
 					from fontTools import ttLib
@@ -72,7 +72,7 @@ class SFNTReader(object):
 				# unpack the entire collection
 				self.fonts = []
 				for idx in range(ttcHeader.numFonts):
-					print('unpacking font %d' % idx) # TEMPORARY
+					log.debug('unpacking font %d' % idx) # TEMPORARY
 					font = SFNTReader(file, checkChecksums=checkChecksums, fontNumber=idx)
 					font.offset = ttcHeader.offsetTable[idx]
 					self.fonts.append(font)
@@ -131,7 +131,7 @@ class SFNTReader(object):
 					else:
 						self.reuseMap[(font_idx, table.tag)] = owning_font_by_offset[table.offset]
 						owner_idx = owning_font_by_offset[table.offset]
-			print('reuseMap from offsets: %s' % self.reuseMap) # TEMPORARY
+			log.debug('reuseMap from offsets: %s' % self.reuseMap) # TEMPORARY
 
 		# Load flavor data if any
 		if self.flavor == "woff":
@@ -142,13 +142,13 @@ class SFNTReader(object):
 		#TEMPORARY
 		if self.isCollection():
 			for idx, font in enumerate(self.fonts):
-				print('font %d numTables %d tables: %s' % (idx, font.numTables, font.keys()))
+				log.debug('font %d numTables %d tables: %s' % (idx, font.numTables, font.keys()))
 		else:
-			print('font %d numTables %d len(self.tables) %d tables: %s' % (
+			log.debug('font %d numTables %d len(self.tables) %d tables: %s' % (
 				self.fontNumber, self.numTables, len(self.tables), [(t.tag, t.offset) for t in self.tables.values()]))
 
 	def isCollection(self):
-		return self.sfntVersion == b"ttcf" and self.fontNumber == -1
+		return self.sfntVersion == "ttcf" and self.fontNumber == -1
 
 	def numTables(self, countReuses=False):
 		if not self.isCollection():
@@ -297,7 +297,7 @@ class SFNTWriter(object):
 		if self.sfntVersion == 'ttcf':
 			self.nextTableOffset = self.directorySize + collectionSize * ttcOffsetTableEntrySize
 
-		print('dirSz %d collectionSize %d numTables %d dirFmtSz %d nextOffset %d' % (
+		log.debug('dirSz %d collectionSize %d numTables %d dirFmtSz %d nextOffset %d' % (
 			self.directorySize, self.collectionSize, self.numTables, self.DirectoryEntry.formatSize, self.nextTableOffset)) # TEMPORARY
 		# clear out directory area
 		self.file.seek(self.nextTableOffset)
@@ -315,7 +315,7 @@ class SFNTWriter(object):
 		self.reuseMaps.append(reuseMap)
 
 		self.nextTableOffset += sfntDirectorySize + numTables * sfntDirectoryEntrySize
-		print('write %d 0s at %d to reserve space for font %d directory of %d tables' % (
+		log.debug('write %d 0s at %d to reserve space for font %d directory of %d tables' % (
 				self.nextTableOffset - self.file.tell(), self.file.tell(), self.fontIndex, numTables))
 		self.file.write(b'\0' * (self.nextTableOffset - self.file.tell()))
 
@@ -334,7 +334,7 @@ class SFNTWriter(object):
 		entry = self.DirectoryEntry()
 		entry.tag = tag
 		entry.offset = self.nextTableOffset
-		print('%s starts at %d' % (tag, entry.offset)) # TEMPORARY
+		log.debug('%s starts at %d' % (tag, entry.offset)) # TEMPORARY
 		if tag == 'head':
 			entry.checkSum = calcChecksum(data[:8] + b'\0\0\0\0' + data[12:])
 			self.headTable = data
@@ -426,7 +426,7 @@ class SFNTWriter(object):
 
 			# Drop in the table headers for each font, including reused tables.
 			for fontIndex in range(self.collectionSize):
-				tables = [table for (i, _), table in self.tables.iteritems() if fontIndex == i]
+				tables = [table for (i, _), table in self.tables.items() if fontIndex == i]
 				reuseMap = self.reuseMaps[fontIndex]
 
 				# write a sfnt directory
@@ -434,12 +434,12 @@ class SFNTWriter(object):
 				sfntDir.numTables = len(tables)
 				sfntDir.updateDerivedFields()
 
-				print('font %d has %d tables (%d tables, %d reused)' % (fontIndex, sfntDir.numTables, len(tables), len(reuseMap)))
-				print('reuse for %d: %s' % (fontIndex, reuseMap))
-				print('sfntDir %d: %s' % (fontIndex, sfntDir))
+				log.debug('font %d has %d tables (%d tables, %d reused)' % (fontIndex, sfntDir.numTables, len(tables), len(reuseMap)))
+				log.debug('reuse for %d: %s' % (fontIndex, reuseMap))
+				log.debug('sfntDir %d: %s' % (fontIndex, sfntDir))
 				self.file.seek(self.offsetTable[fontIndex])
 				self.file.write(sstruct.pack(sfntDirectoryFormat, sfntDir))
-				print('Wrote %d byte directory at %d for font %d' % (self.file.tell() - self.offsetTable[fontIndex], self.offsetTable[fontIndex], fontIndex))
+				log.debug('Wrote %d byte directory at %d for font %d' % (self.file.tell() - self.offsetTable[fontIndex], self.offsetTable[fontIndex], fontIndex))
 
 				for table in tables:
 					self.file.write(table.toString())
@@ -492,7 +492,7 @@ class SFNTWriter(object):
 		checksumadjustment = self._calcMasterChecksum(directory)
 		# write the checksum to the file
 		# Writes for all 'head' if this is a collection
-		heads = [table for (_, tag), table in self.tables.iteritems() if tag == 'head']
+		heads = [table for (_, tag), table in self.tables.items() if tag == 'head']
 		if not heads:
 			from fontTools import ttLib
 			raise ttLib.TTLibError("At least one 'head' table expected")
