@@ -307,7 +307,7 @@ class TTFont(object):
 		return tags
 
 	def isCollection(self):
-		return self.sfntVersion == b'ttcf'
+		return self.sfntVersion == 'ttcf'
 
 	def _reuseMap(self, fontIndex):
 		if not -1 < fontIndex < len(self.fonts):
@@ -366,9 +366,9 @@ class TTFont(object):
 		else:
 			self._singleFontToXML(writer, progress, quiet, tables, splitTables)
 
-		writer.close()
-		if self.verbose:
-			debugmsg("Done dumping TTX")
+		# close if 'fileOrPath' is a path; leave it open if it's a file
+		if not hasattr(fileOrPath, "write"):
+			writer.close()
 
 	def _tables(self, skipTables=None):
 		tables = list(self.keys())
@@ -389,8 +389,7 @@ class TTFont(object):
 		if not splitTables:
 			writer.newline()
 		else:
-			# 'fileOrPath' must now be a path
-			path, ext = os.path.splitext(fileOrPath)
+			path, ext = os.path.splitext(writer.file.name)
 			fileNameTemplate = path + ".%s" + ext
 
 		log.debug('_singleFontToXML tables %s' % tables) # TEMPORARY
@@ -409,7 +408,7 @@ class TTFont(object):
 				writer.newline()
 			else:
 				tableWriter = writer
-			self._tableToXML(tableWriter, tag, progress, reuseMap.get(tag, -1))
+			self._tableToXML(tableWriter, tag, progress, reuse_from=reuseMap.get(tag, -1))
 			if splitTables:
 				tableWriter.endtag("ttFont")
 				tableWriter.newline()
@@ -418,9 +417,6 @@ class TTFont(object):
 			progress.set((i + 1))
 		writer.endtag("ttFont")
 		writer.newline()
-		# close if 'fileOrPath' is a path; leave it open if it's a file
-		if not hasattr(fileOrPath, "write"):
-			writer.close()
 
 	def _tableToXML(self, writer, tag, progress, quiet=None, reuse_from=-1):
 		if quiet is not None:
@@ -755,13 +751,12 @@ class TTFont(object):
 
 	def _throwIfBadReuseMap(self):
 		# sanity check the reuse map: it should only contain backrefs
-		bad_reuse = [(k,v) for k,v in self.reuseMap.iteritems() if k[0] <= v]
+		bad_reuse = [(k,v) for k,v in self.reuseMap.items() if k[0] <= v]
 		if bad_reuse:
 			raise TTLibError('reuseMap can only contain backrefs; following are illegal: %s' % bad_reuse)
 
 	def _writeCollectionFont(self, fontIndex, writer):
-		if self.verbose:
-			debugmsg("writing font %d to disk" % fontIndex)
+		log.debug("writing font %d to disk" % fontIndex)
 
 		font = self.fonts[fontIndex]
 
@@ -1090,7 +1085,7 @@ def sortedTagList(tagList, tableOrder=None):
 
 
 def reuseMapForFont(reuseMap, fontIndex):
-	return {tag: to_index for (from_index, tag), to_index in reuseMap.iteritems()
+	return {tag: to_index for (from_index, tag), to_index in reuseMap.items()
 					if from_index == fontIndex}
 
 
