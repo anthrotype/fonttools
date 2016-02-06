@@ -198,13 +198,11 @@ class TTFont(object):
 			for reader in self.reader.fonts:
 				font = TTFont(res_name_or_index=res_name_or_index,
 										  checkChecksums=checkChecksums,
-										  verbose=verbose,
 										  recalcBBoxes=recalcBBoxes,
 										  allowVID=allowVID,
 										  ignoreDecompileErrors=ignoreDecompileErrors,
 										  recalcTimestamp=recalcTimestamp,
 										  lazy=lazy,
-										  quiet=quiet,
 										  reader=reader)
 				self.fonts.append(font)
 
