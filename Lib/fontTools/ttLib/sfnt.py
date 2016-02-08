@@ -425,7 +425,7 @@ class SFNTWriter(object):
 
 			# Drop in the table headers for each font, including reused tables.
 			for fontIndex in range(self.collectionSize):
-				tables = [table for (i, _), table in self.tables.items() if fontIndex == i]
+				tables = sorted([(tag, table) for (i, tag), table in self.tables.items() if fontIndex == i])
 				reuseMap = self.reuseMaps[fontIndex]
 
 				# write a sfnt directory
@@ -440,8 +440,8 @@ class SFNTWriter(object):
 				self.file.write(sstruct.pack(sfntDirectoryFormat, sfntDir))
 				log.debug('Wrote %d byte directory at %d for font %d' % (self.file.tell() - self.offsetTable[fontIndex], self.offsetTable[fontIndex], fontIndex))
 
-				for table in tables:
-					self.file.write(table.toString())
+				for tag, entry in tables:
+					self.file.write(entry.toString())
 
 		# checksums aren't well defined for collections
 		# TODO: something reasonable. 0s?
