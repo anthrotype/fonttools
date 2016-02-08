@@ -211,7 +211,6 @@ class TTCReader(SFNTReader):
 			self.flavor = None
 			self._seekOffsetTable(fontNumber)
 		self._readDirectory()
-		self._readFlavorData()
 
 	def _readCollectionHeader(self):
 		if self.file.read(4) != b"ttcf":
