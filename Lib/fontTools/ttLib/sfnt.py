@@ -108,8 +108,9 @@ class SFNTReader(object):
 		"""
 		if args and cls is SFNTReader:
 			infile = args[0]
+			pos = infile.tell()
 			sfntVersion = Tag(infile.read(4))
-			infile.seek(0)
+			infile.seek(pos)
 			if sfntVersion == "ttcf":
 				# return new TTCReader object
 				from fontTools.ttLib.ttc import TTCReader
