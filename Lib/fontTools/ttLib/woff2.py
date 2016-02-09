@@ -8,7 +8,7 @@ from fontTools.misc import sstruct
 from fontTools.misc.arrayTools import calcIntBounds
 from fontTools.misc.textTools import pad
 from fontTools.ttLib import TTFont, TTLibError, getTableModule, getTableClass
-from fontTools.ttLib.sfnt.woff import WOFFReader, WOFFWriter, WOFFFlavorData
+from fontTools.ttLib.woff import WOFFReader, WOFFWriter, WOFFFlavorData
 from fontTools.ttLib.sfnt import DirectoryEntry
 from fontTools.ttLib.tables import ttProgram
 import logging

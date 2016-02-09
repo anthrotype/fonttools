@@ -128,11 +128,11 @@ class SFNTReader(object):
 				return object.__new__(TTCReader)
 			elif sfntVersion == "wOFF":
 				# return new WOFFReader object
-				from fontTools.ttLib.sfnt.woff import WOFFReader
+				from fontTools.ttLib.woff import WOFFReader
 				return object.__new__(WOFFReader)
 			elif sfntVersion == "wOF2":
 				# return new WOFF2Reader object
-				from fontTools.ttLib.sfnt.woff2 import WOFF2Reader
+				from fontTools.ttLib.woff2 import WOFF2Reader
 				return object.__new__(WOFF2Reader)
 		# return default object
 		return object.__new__(cls)
@@ -261,11 +261,11 @@ class SFNTWriter(object):
 				raise NotImplementedError
 			elif flavor == "woff":
 				# return new WOFFWriter object
-				from fontTools.ttLib.sfnt.woff import WOFFWriter
+				from fontTools.ttLib.woff import WOFFWriter
 				return object.__new__(WOFFWriter)
 			elif flavor == "woff2":
 				# return new WOFF2Writer object
-				from fontTools.ttLib.sfnt.woff2 import WOFF2Writer
+				from fontTools.ttLib.woff2 import WOFF2Writer
 				return object.__new__(WOFF2Writer)
 		# return default object
 		return object.__new__(cls)
