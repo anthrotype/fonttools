@@ -1,9 +1,10 @@
 from __future__ import print_function, division, absolute_import
 # from fontTools.misc.py23 import *
-from fontTools.ttLib import TTLibError
+from fontTools.ttLib import TTLibError, TTFont
 from fontTools.ttLib.sfnt import SFNTReader, SFNTWriter
 import struct
 from fontTools.misc import sstruct
+from collections import MutableSequence
 
 
 # -- TTC directory helpers and cruft
@@ -22,23 +23,75 @@ ttcHeaderFormat = """
 ttcHeaderSize = sstruct.calcsize(ttcHeaderFormat)
 
 
+class TTCollection(MutableSequence):
+
+    def __init__(self, fileOrTTFonts=None, **kwargs):
+        self.fonts = []
+        self.reader = None
+        if not fileOrTTFonts:
+            return
+        if isinstance(fileOrTTFonts, (TTCollection, tuple, list)):
+            for font in fileOrTTFonts:
+                if not isinstance(font, TTFont):
+                    raise TTLibError("expected TTFont, found %s" % type(font).__name__)
+            self.fonts = list(fileOrTTFonts)
+            self.reader = None
+        else:
+            self.fonts = []
+            if not hasattr(fileOrTTFonts, "read"):
+                closeStream = True
+                file = open(fileOrTTFonts, 'rb')
+            else:
+                # assume "file" is a readable file object
+                file = fileOrTTFonts
+                closeStream = False
+            checkChecksums = kwargs.pop("checkChecksums", False)
+            self.reader = TTCReader(file, checkChecksums)
+            for i in range(self.reader.numFonts):
+                self.reader.seekOffsetTable(i)
+                font = TTFont(**kwargs)
+                font.reader = SFNTReader(file, self.reader.checkChecksums)
+                self.fonts.append(font)
+
+    def __len__(self):
+        return len(self.fonts)
+
+    def __getitem__(self, i):
+        return self.fonts[i]
+
+    def __setitem__(self, i, item):
+        if not isinstance(item, TTFont):
+            raise TTLibError("TTCollection can only contain TTFont instances")
+        self.fonts[i] = item
+
+    def __delitem__(self, i):
+        del self.fonts[i]
+
+    def insert(self, i, item):
+        if not isinstance(item, TTFont):
+            raise TTLibError("TTCollection can only contain TTFont instances")
+        self.fonts.insert(i, item)
+
+    def __repr__(self):
+        return "TTCollection(%r)" % self.fonts
+
+
 class TTCReader(SFNTReader):
 
     flavor = "ttc"
 
-    def __init__(self, file, checkChecksums=1, fontNumber=-1):
+    def __init__(self, file, checkChecksums=1, fontNumber=None):
         self.file = file
         self.checkChecksums = checkChecksums
 
         self._readCollectionHeader()
-        if fontNumber == -1:
-            # read the whole collection
-            raise NotImplementedError
+        if fontNumber is None:
+            self.flavor = self.__class__.flavor
         else:
             # read single font from collection
             self.flavor = None
-            self._seekOffsetTable(fontNumber)
-        self._readDirectory()
+            self.seekOffsetTable(fontNumber)
+            self._readDirectory()
 
     def _readCollectionHeader(self):
         if self.file.read(4) != b"ttcf":
@@ -60,7 +113,7 @@ class TTCReader(SFNTReader):
             # TODO(anthrotype): use flavorData to store version 2.0 signatures?
             pass
 
-    def _seekOffsetTable(self, fontNumber):
+    def seekOffsetTable(self, fontNumber):
         """Move current position to the offset table of font 'fontNumber'."""
         if not 0 <= fontNumber < self.numFonts:
             raise TTLibError("specify a font number between 0 and %d (inclusive)" % (self.numFonts - 1))
