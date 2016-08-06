@@ -49,7 +49,9 @@ TrueType/OpenType fonts to and from an XML-based format.
 
 setup(
 	name="fonttools",
-	use_scm_version=True,
+	use_scm_version={
+		"write_to": "Lib/fontTools/version.py",
+	},
 	description="Tools to manipulate font files",
 	author="Just van Rossum",
 	author_email="just@letterror.com",
