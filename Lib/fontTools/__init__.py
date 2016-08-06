@@ -3,8 +3,12 @@ from fontTools.misc.py23 import *
 import logging
 from fontTools.misc.loggingTools import configLogger
 
-log = logging.getLogger(__name__)
+try:
+    from fontTools.version import version
+except ImportError:
+    # 'version.py' is missing; fonttools was not correctly installed
+    version = None
 
-version = "3.0"
+log = logging.getLogger(__name__)
 
 __all__ = ["version", "log", "configLogger"]
