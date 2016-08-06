@@ -20,3 +20,6 @@ htmlcov/
 
 # OSX Finder
 .DS_Store
+
+# setuptools_scm auto-generated version file
+Lib/fontTools/version.py
