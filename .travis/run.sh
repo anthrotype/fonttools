@@ -18,6 +18,7 @@ if [[ "${TOXENV}" == "jython" ]]; then
 else
     source ~/.venv/bin/activate
     export SETUPTOOLS_SCM_DEBUG=1
+    git tag
     tox -v
     cat .tox/log/tox-0.log
 fi
