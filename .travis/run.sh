@@ -19,8 +19,10 @@ else
     source ~/.venv/bin/activate
     export SETUPTOOLS_SCM_DEBUG=1
     git --version
+    git describe --dirty --tags --long --match "*.*"
     git fetch --tags
     git tag
+    git describe --dirty --tags --long --match "*.*"
     tox -v
     cat .tox/log/tox-0.log
 fi
