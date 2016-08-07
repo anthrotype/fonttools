@@ -37,10 +37,43 @@ fonts. The package also contains a tool called "TTX" which converts
 TrueType/OpenType fonts to and from an XML-based format.
 """
 
+
+def guess_next_dev_version(version):
+	""" If the distance from the last version tag is N != 0, increase the
+	last number by one, and append '.devN' suffix. Else return the version tag
+	as is.
+
+	Note: The version tag must be two to three non-negative integer values,
+	separated by dots: MAJOR.MINOR[.MICRO].
+	When 'MICRO' is omitted, it's assumed to be 0.
+
+	>>> from setuptools_scm.version import meta
+	>>> guess_next_dev_version(meta('3.1'))
+	3.1
+	>>> guess_next_dev_version(meta('3.1', distance=4))
+	3.1.1.dev4
+	"""
+	if version.exact:
+		return version.format_with("{tag}")
+	else:
+		import re
+
+		tag = str(version.tag)
+		version_tag_re = re.compile(r"^([0-9]+.[0-9]+)(?:.([0-9]+))?$")
+		try:
+			major_minor, micro = version_tag_re.match(tag).groups()
+		except AttributeError:
+			raise ValueError(
+				'Invalid version tag: %r. It must match MAJOR.MINOR[.MICRO]' % tag)
+		return '%s.%d.dev%s' % (
+			major_minor, int(micro or '0') + 1, version.distance)
+
+
 setup(
 	name="fonttools",
 	use_scm_version={
 		"write_to": "Lib/fontTools/version.py",
+		"version_scheme": guess_next_dev_version,
 	},
 	description="Tools to manipulate font files",
 	author="Just van Rossum",
