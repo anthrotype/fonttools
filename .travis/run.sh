@@ -17,5 +17,6 @@ if [[ "${TOXENV}" == "jython" ]]; then
     jython -m pytest || true
 else
     source ~/.venv/bin/activate
-    tox
+    tox -v
+    cat .tox/log/tox-0.log
 fi
