@@ -19,6 +19,7 @@ else
     source ~/.venv/bin/activate
     export SETUPTOOLS_SCM_DEBUG=1
     git --version
+    git fetch --unshallow
     git describe --dirty --tags --long --match "*.*"
     git fetch --tags
     git tag
