@@ -17,6 +17,7 @@ if [[ "${TOXENV}" == "jython" ]]; then
     jython -m pytest || true
 else
     source ~/.venv/bin/activate
+    export SETUPTOOLS_SCM_DEBUG=1
     tox -v
     cat .tox/log/tox-0.log
 fi
