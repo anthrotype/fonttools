@@ -17,13 +17,8 @@ if [[ "${TOXENV}" == "jython" ]]; then
     jython -m pytest || true
 else
     source ~/.venv/bin/activate
-    export SETUPTOOLS_SCM_DEBUG=1
-    git --version
-    # git fetch --unshallow
-    git describe --dirty --tags --long --match "*.*"
-    git fetch --tags
-    git tag
-    git describe --dirty --tags --long --match "*.*"
-    tox -v
-    cat .tox/log/tox-0.log
+    if [ "$BUILD_DIST" = true ]; then
+        git fetch --unshallow
+    fi
+    tox
 fi
