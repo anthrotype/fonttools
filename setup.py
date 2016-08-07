@@ -69,12 +69,25 @@ def guess_next_dev_version(version):
 			major_minor, int(micro or '0') + 1, version.distance)
 
 
-setup(
-	name="fonttools",
-	use_scm_version={
+DESCRIBE_COMMAND = 'git describe --dirty --tags --long'
+
+
+def my_scm_version():
+	from setuptools_scm.git import parse as _parse
+
+	def parse(root, describe_command=DESCRIBE_COMMAND):
+		return _parse(root, describe_command)
+
+	return {
 		"write_to": "Lib/fontTools/version.py",
 		"version_scheme": guess_next_dev_version,
-	},
+		"parse": parse,
+	}
+
+
+setup(
+	name="fonttools",
+	use_scm_version=my_scm_version,
 	description="Tools to manipulate font files",
 	author="Just van Rossum",
 	author_email="just@letterror.com",
