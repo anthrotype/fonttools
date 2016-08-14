@@ -51,8 +51,8 @@ install:
   - "python --version"
   - "python -c \"import struct; print(struct.calcsize('P') * 8)\""
 
-  # upgrade pip to avoid out-of-date warnings
-  - "python -m pip install --disable-pip-version-check --user --upgrade pip"
+  # upgrade pip and setuptools to avoid out-of-date warnings
+  - "python -m pip install --disable-pip-version-check --user --upgrade pip setuptools"
   - "python -m pip --version"
 
   # install the dependencies to run the tests
@@ -64,10 +64,10 @@ build: false
 test_script:
   - "%WITH_COMPILER% tox"
 
-notifications:
-  - provider: Email
-    to:
-      - fonttools@googlegroups.com
-    on_build_success: false
-    on_build_failure: true
-    on_build_status_changed: true
+# notifications:
+#   - provider: Email
+#     to:
+#       - fonttools@googlegroups.com
+#     on_build_success: false
+#     on_build_failure: true
+#     on_build_status_changed: true
