@@ -90,6 +90,7 @@ setup(
 	data_files=[('share/man/man1', ["Doc/ttx.1"])],
 	setup_requires=[
 		"setuptools_scm>=1.11.1",
+		'setuptools_scm_git_archive>=1.0',
 	],
 	entry_points={
 		'console_scripts': [
