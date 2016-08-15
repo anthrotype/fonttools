@@ -61,10 +61,10 @@ build: false
 test_script:
   - "tox"
 
-notifications:
-  - provider: Email
-    to:
-      - fonttools@googlegroups.com
-    on_build_success: false
-    on_build_failure: true
-    on_build_status_changed: true
+# notifications:
+#   - provider: Email
+#     to:
+#       - fonttools@googlegroups.com
+#     on_build_success: false
+#     on_build_failure: true
+#     on_build_status_changed: true
