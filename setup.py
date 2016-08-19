@@ -62,5 +62,8 @@ setup(
 			"pyftinspect = fontTools.inspect:main"
 		]
 	},
+	extras_require={
+		'woff2': ["brotlipy>=0.5.1"],
+	},
 	**classifiers
 )
