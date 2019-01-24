@@ -487,6 +487,61 @@ class InsertionMorphAction(AATAction):
 		return result, actionIndex
 
 
+class ContextualKernAction(AATAction):
+	staticSize = 4
+	actionHeaderSize = 0
+	_FLAGS = ["Push", "DontAdvance", "Clear"]
+
+	def __init__(self):
+		self.NewState = 0
+		self.Push = False
+		self.DontAdvance = False
+		self.Clear = False
+		self.ReservedFlags = 0
+
+	def compile(self, writer, font, actionIndex):
+		assert actionIndex is None
+		writer.writeUShort(self.NewState)
+		flags = self.ReservedFlags
+		if self.Push: flags |= 0x8000
+		if self.DontAdvance: flags |= 0x4000
+		if self.Clear: flags |= 0x2000
+		writer.writeUShort(flags)
+
+	def decompile(self, reader, font, actionReader):
+		assert actionReader is None
+		self.NewState = reader.readUShort()
+		flags = reader.readUShort()
+		self.Push = bool(flags & 0x8000)
+		self.DontAdvance = bool(flags & 0x4000)
+		self.Clear = bool(flags & 0x2000)
+		self.ReservedFlags = flags & 0x1FFF
+
+	def toXML(self, xmlWriter, font, attrs, name):
+		xmlWriter.begintag(name, **attrs)
+		xmlWriter.newline()
+		xmlWriter.simpletag("NewState", value=self.NewState)
+		xmlWriter.newline()
+		self._writeFlagsToXML(xmlWriter)
+		xmlWriter.endtag(name)
+		xmlWriter.newline()
+
+	def fromXML(self, name, attrs, content, font):
+		self.NewState = self.ReservedFlags = 0
+		self.Push = self.DontAdvance = self.Clear = False
+		content = [t for t in content if isinstance(t, tuple)]
+		for eltName, eltAttrs, eltContent in content:
+			if eltName == "NewState":
+				self.NewState = safeEval(eltAttrs["value"])
+			elif eltName == "ReservedFlags":
+				self.ReservedFlags = safeEval(eltAttrs["value"])
+			elif eltName == "Flags":
+				for flag in eltAttrs["value"].split(","):
+					self._setFlag(flag.strip())
+
+
+
+
 class FeatureParams(BaseTable):
 
 	def compile(self, writer, font):

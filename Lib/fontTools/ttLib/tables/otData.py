@@ -1324,6 +1324,28 @@ otData = [
 		('GlyphCIDMap', 'Mapping', None, None, 'The CIDs for the glyphs in the font, starting with glyph 0. If a glyph does not correspond to a CID in the identified collection, 0xFFFF is used'),
 	]),
 
+	#
+	# kerx
+	#
+
+	('kerx', [
+		('uint16', 'Version', None, None, 'Version of the morx table.'),
+		('uint16', 'Reserved', None, None, 'Reserved (set to zero).'),
+		('uint32', 'KerxSubtableCount', None, None, 'The number of subtables included in the extended kerning table.'),
+		('KerxSubtable', 'KerxSubtable', 'KerxSubtableCount', 0, 'Array of extended kerning subtables.'),
+	]),
+
+	('KerxSubtable', [
+		('uint32', 'StructLength', None, None, 'The length of this subtable in bytes, including this header.'),
+		('uint8', 'CoverageFlags', None, None, 'Most significant byte of coverage flags.'),
+		('uint16', 'Reserved', None, None, 'Unused.'),
+		('uint8', 'KerxType', None, None, 'Subtable type.'),
+		('uint32', 'TupleCount', None, None, 'The tuple count. This value is only used with variation fonts and should be 0 for all other fonts. The subtable\'s tupleCount will be ignored if the \'kerx\' table version is less than 4.'),
+		# ('uint32', 'MorphFeatureCount', None, None, 'Number of feature subtable entries.'),
+		# ('uint32', 'MorphSubtableCount', None, None, 'The number of subtables in the chain.'),
+		# ('MorphFeature', 'MorphFeature', 'MorphFeatureCount', 0, 'Array of metamorphosis features.'),
+		# ('MorxSubtable', 'MorphSubtable', 'MorphSubtableCount', 0, 'Array of extended metamorphosis subtables.'),
+	]),
 
 	#
 	# lcar

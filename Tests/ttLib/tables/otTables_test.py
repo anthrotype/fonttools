@@ -547,6 +547,58 @@ class InsertionMorphActionTest(unittest.TestCase):
         })
 
 
+class ContextualKernActionTest(unittest.TestCase):
+
+    def setUp(self):
+        self.font = FakeFont(['.notdef', 'A', 'B', 'C'])
+
+    def testCompile(self):
+        r = otTables.ContextualKernAction()
+        r.NewState = 0x1234
+        r.Push = r.DontAdvance = r.Clear = True
+        r.ReservedFlags = 0x1FFF
+        writer = OTTableWriter()
+        r.compile(writer, self.font, actionIndex=None)
+        self.assertEqual(hexStr(writer.getAllData()), "1234ffff")
+
+    def testCompileActions(self):
+        act = otTables.ContextualKernAction()
+        self.assertEqual(act.compileActions(self.font, []), (None, None))
+
+    def testDecompileToXML(self):
+        r = otTables.ContextualKernAction()
+        r.decompile(OTTableReader(deHexStr("1234fffd")),
+                    self.font, actionReader=None)
+        toXML = lambda w, f: r.toXML(w, f, {"Test": "Foo"}, "Transition")
+        self.assertEqual(getXML(toXML, self.font), [
+                '<Transition Test="Foo">',
+                '  <NewState value="4660"/>',  # 0x1234 = 4660
+                '  <Flags value="Push,DontAdvance,Clear"/>',
+                '  <ReservedFlags value="0x1FFD"/>',
+                '</Transition>',
+        ])
+
+    def testCompileFromXML(self):
+        action_xml = [
+            '<Transition Test="Foo">',
+            '  <NewState value="4660"/>',  # 0x1234 = 4660
+            '  <Flags value="Push,DontAdvance,Clear"/>',
+            '  <ReservedFlags value="0x1FFD"/>',
+            # '  <CurrentInsertionAction glyph="B"/>',
+            # '  <CurrentInsertionAction glyph="C"/>',
+            # '  <MarkedInsertionAction glyph="B"/>',
+            # '  <MarkedInsertionAction glyph="A"/>',
+            # '  <MarkedInsertionAction glyph="D"/>',
+            '</Transition>'
+        ]
+        a = otTables.ContextualKernAction()
+        for name, attrs, content in parseXML(action_xml):
+            a.fromXML(name, attrs, content, self.font)
+        writer = OTTableWriter()
+        a.compile(writer, self.font, actionIndex=None)
+        self.assertEqual(hexStr(writer.getAllData()), "1234fffd")
+
+
 def test_splitMarkBasePos():
 	from fontTools.otlLib.builder import buildAnchor, buildMarkBasePosSubtable
 
