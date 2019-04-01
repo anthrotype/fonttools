@@ -16,7 +16,6 @@ from fontTools.misc.fixedTools import floatToFixedToFloat, otRound
 from fontTools.varLib.models import supportScalar, normalizeValue, piecewiseLinearMap
 from fontTools.ttLib import TTFont
 from fontTools.ttLib.tables._g_l_y_f import GlyphCoordinates
-from fontTools.ttLib.tables.TupleVariation import TupleVariation
 from fontTools.varLib.mvar import MVAR_ENTRIES
 import collections
 from copy import deepcopy
