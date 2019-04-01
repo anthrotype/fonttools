@@ -2,7 +2,6 @@ from __future__ import print_function, division, absolute_import
 from fontTools.misc.py23 import *
 from fontTools.misc.fixedTools import fixedToFloat, floatToFixed, otRound
 from fontTools.misc.textTools import safeEval
-from fontTools.varLib.iup import iup_delta, iup_delta_optimize
 import array
 import io
 import logging
@@ -496,10 +495,10 @@ class TupleVariation(object):
 		)
 
 	def calcInferredDeltas(self, origCoords, endPts):
+		from fontTools.varLib.iup import iup_delta
+
 		deltaType = self.checkDeltaType()
-		if deltaType is None:
-			return
-		elif deltaType != "gvar":
+		if deltaType == "cvar":
 			raise TypeError(
 			    "Only 'gvar' TupleVariation can have inferred deltas"
 			)
@@ -507,6 +506,8 @@ class TupleVariation(object):
 			self.coordinates = iup_delta(self.coordinates, origCoords, endPts)
 
 	def optimize(self, origCoords, endPts, tolerance=0.5):
+		from fontTools.varLib.iup import iup_delta_optimize
+
 		if self.hasInferredDeltas():
 			return  # already optimized
 
