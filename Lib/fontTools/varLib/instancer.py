@@ -52,13 +52,14 @@ def instantiateTupleVariationStore(variations, location, origCoords=None, endPts
             # will be folded into the neutral
             defaultDeltas.append(var.coordinates)
         else:
-            # else keep the TupleVariation, grouped with tuples with overlapping "tents"
+            # else keep the TupleVariation, grouped by overlapping "tents"
             tent = tuple(var.axes.items())
             if tent in varGroups:
                 varGroups[tent].append(var)
             else:
                 varGroups[tent] = [var]
 
+    # merge TupleVariation with the same axes
     newVariations = []
     for group in varGroups.values():
         var = group[0]
