@@ -65,7 +65,6 @@ def instantiateTupleVariationStore(variations, location, origCoords=None, endPts
             # any inferred (i.e. None) deltas to be able to sum the coordinates
             if origCoords is not None:
                 var.calcInferredDeltas(origCoords, endPts)
-            assert defaultDeltas is None
             defaultDeltas = var.coordinates
         else:
             var.roundDeltas()
