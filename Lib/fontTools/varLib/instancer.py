@@ -61,7 +61,7 @@ def instantiateTupleVariationStore(variations, location, origCoords=None, endPts
 
         if not axes:
             # if no axis is left in the TupleVariation, we drop it and its deltas
-            # will be latter added to the default instance; we need to interpolate
+            # will be later added to the default instance; we need to interpolate
             # any inferred (i.e. None) deltas to be able to sum the coordinates
             if origCoords is not None:
                 var.calcInferredDeltas(origCoords, endPts)

@@ -497,8 +497,7 @@ class TupleVariation(object):
 	def calcInferredDeltas(self, origCoords, endPts):
 		from fontTools.varLib.iup import iup_delta
 
-		deltaType = self.checkDeltaType()
-		if deltaType == "cvar":
+		if self.checkDeltaType() == "cvar":
 			raise TypeError(
 			    "Only 'gvar' TupleVariation can have inferred deltas"
 			)
