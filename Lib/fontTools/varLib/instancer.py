@@ -418,7 +418,7 @@ def sanityCheckVariableTables(varfont):
             raise ValueError("Can't have gvar without glyf")
 
 
-def instantiateVariableFont(varfont, axis_limits, inplace=False):
+def instantiateVariableFont(varfont, axis_limits, inplace=False, optimize=True):
     sanityCheckVariableTables(varfont)
 
     if not inplace:
@@ -432,7 +432,7 @@ def instantiateVariableFont(varfont, axis_limits, inplace=False):
         raise NotImplementedError("Axes range limits are not supported yet")
 
     if "gvar" in varfont:
-        instantiateGvar(varfont, axis_limits)
+        instantiateGvar(varfont, axis_limits, optimize=optimize)
 
     if "cvar" in varfont:
         instantiateCvar(varfont, axis_limits)
@@ -499,6 +499,12 @@ def parseArgs(args):
         default=None,
         help="Output instance TTF file (default: INPUT-instance.ttf).",
     )
+    parser.add_argument(
+        "--no-optimize",
+        dest="optimize",
+        action="store_false",
+        help="do not perform IUP optimization on the remaining gvar TupleVariations",
+    )
     logging_group = parser.add_mutually_exclusive_group(required=False)
     logging_group.add_argument(
         "-v", "--verbose", action="store_true", help="Run more verbosely."
@@ -521,17 +527,19 @@ def parseArgs(args):
     axis_limits = parseLimits(options.locargs)
     if len(axis_limits) != len(options.locargs):
         raise ValueError("Specified multiple limits for the same axis")
-    return (infile, outfile, axis_limits)
+    return (infile, outfile, axis_limits, options)
 
 
 def main(args=None):
-    infile, outfile, axis_limits = parseArgs(args)
+    infile, outfile, axis_limits, options = parseArgs(args)
     log.info("Restricting axes: %s", axis_limits)
 
     log.info("Loading variable font")
     varfont = TTFont(infile)
 
-    instantiateVariableFont(varfont, axis_limits, inplace=True)
+    instantiateVariableFont(
+        varfont, axis_limits, inplace=True, optimize=options.optimize
+    )
 
     log.info("Saving partial variable font %s", outfile)
     varfont.save(outfile)
