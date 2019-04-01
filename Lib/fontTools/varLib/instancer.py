@@ -16,6 +16,7 @@ from fontTools.misc.fixedTools import floatToFixedToFloat, otRound
 from fontTools.varLib.models import supportScalar, normalizeValue, piecewiseLinearMap
 from fontTools.ttLib import TTFont
 from fontTools.ttLib.tables._g_l_y_f import GlyphCoordinates
+from fontTools.ttLib.tables.TupleVariation import TupleVariation
 from fontTools.varLib.mvar import MVAR_ENTRIES
 import collections
 from copy import deepcopy
@@ -28,7 +29,6 @@ log = logging.getLogger("fontTools.varlib.instancer")
 
 
 def instantiateTupleVariationStore(variations, location, origCoords=None, endPts=None):
-    hasInferredDeltas = origCoords is not None and endPts is not None
     varGroups = collections.OrderedDict()
     defaultDeltas = []
     for var in variations:
@@ -44,12 +44,11 @@ def instantiateTupleVariationStore(variations, location, origCoords=None, endPts
         elif scalar != 1.0:
             var.scaleDeltas(scalar)
 
-        if hasInferredDeltas:
-            var.calcInferredDeltas(origCoords, endPts)
-
         if not var.axes:
             # if no axis is left in the TupleVariation, also drop it; its deltas
             # will be folded into the neutral
+            if origCoords is not None:
+                var.calcInferredDeltas(origCoords, endPts)
             defaultDeltas.append(var.coordinates)
         else:
             # else keep the TupleVariation, grouped by overlapping "tents"
@@ -59,12 +58,13 @@ def instantiateTupleVariationStore(variations, location, origCoords=None, endPts
             else:
                 varGroups[tent] = [var]
 
-    # merge TupleVariation with the same axes
     newVariations = []
     for group in varGroups.values():
-        var = group[0]
-        for other in group[1:]:
-            var += other
+        if len(group) > 1:
+            # merge TupleVariation having the same axes
+            var = _mergeTupleVariations(group, origCoords, endPts)
+        else:
+            var = group[0]
 
         var.roundDeltas()
 
@@ -72,6 +72,40 @@ def instantiateTupleVariationStore(variations, location, origCoords=None, endPts
 
     variations[:] = newVariations
     return defaultDeltas
+
+
+def _mergeTupleVariations(variations, origCoords=None, endPts=None):
+    assert len(variations) > 1
+
+    first, others = variations[0], variations[1:]
+
+    deltas1 = first.coordinates
+    deltaType1 = first.checkDeltaType()
+    # to sum the gvar tuples we need to first interpolate any inferred deltas
+    if deltaType1 == "gvar":
+        assert origCoords is not None
+    if origCoords is not None:
+        assert endPts is not None
+        first.calcInferredDeltas(origCoords, endPts)
+
+    length = len(deltas1)
+    for other in others:
+        assert first.axes == other.axes
+        deltas2 = other.coordinates
+        assert len(deltas2) == length
+        deltaType2 = other.checkDeltaType()
+        assert deltaType1 == deltaType2
+        if origCoords is not None:
+            other.calcInferredDeltas(origCoords, endPts)
+        for i, (d1, d2) in enumerate(zip(deltas1, deltas2)):
+            if d1 is not None and d2 is not None:
+                if deltaType1 == "gvar":
+                    deltas1[i] = (d1[0] + d2[0], d1[1] + d2[1])
+                else:
+                    deltas1[i] = d1 + d2
+            elif d1 is None:
+                deltas1[i] = d2
+    return first
 
 
 def setGvarGlyphDeltas(varfont, glyphname, deltasets):
@@ -88,18 +122,14 @@ def _getGlyphCoordinatesAndEndPts(varfont, glyphname):
     return origCoords, g.endPts
 
 
-def instantiateGvarGlyph(varfont, glyphname, location):
+def instantiateGvarGlyph(varfont, glyphname, location, optimize=True):
     gvar = varfont["gvar"]
     varStore = gvar.variations[glyphname]
 
-    optimized = any(var.hasInferredDeltas() for var in varStore)
-    if optimized:
-        origCoords, endPts = _getGlyphCoordinatesAndEndPts(varfont, glyphname)
-        defaultDeltas = instantiateTupleVariationStore(
-            varStore, location, origCoords, endPts
-        )
-    else:
-        defaultDeltas = instantiateTupleVariationStore(varStore, location)
+    origCoords, endPts = _getGlyphCoordinatesAndEndPts(varfont, glyphname)
+    defaultDeltas = instantiateTupleVariationStore(
+        varStore, location, origCoords, endPts
+    )
 
     if defaultDeltas:
         setGvarGlyphDeltas(varfont, glyphname, defaultDeltas)
@@ -108,12 +138,12 @@ def instantiateGvarGlyph(varfont, glyphname, location):
         del gvar.variations[glyphname]
         return
 
-    if optimized:
+    if optimize:
         for var in varStore:
             var.optimize(origCoords, endPts)
 
 
-def instantiateGvar(varfont, location):
+def instantiateGvar(varfont, location, optimize=True):
     log.info("Instantiating glyf/gvar tables")
 
     gvar = varfont["gvar"]
@@ -132,7 +162,7 @@ def instantiateGvar(varfont, location):
         ),
     )
     for glyphname in glyphnames:
-        instantiateGvarGlyph(varfont, glyphname, location)
+        instantiateGvarGlyph(varfont, glyphname, location, optimize=optimize)
 
     if not gvar.variations:
         del varfont["gvar"]

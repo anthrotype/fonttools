@@ -507,13 +507,9 @@ class TupleVariation(object):
 			self.coordinates = iup_delta(self.coordinates, origCoords, endPts)
 
 	def optimize(self, origCoords, endPts, tolerance=0.5):
-		deltaType = self.checkDeltaType()
-		if deltaType is None:
-			return
-		elif deltaType != "gvar":
-			raise TypeError(
-			    "Only 'gvar' TupleVariation can have inferred deltas"
-			)
+		if self.hasInferredDeltas():
+			return  # already optimized
+
 		delta_opt = iup_delta_optimize(
 		    self.coordinates, origCoords, endPts, tolerance=tolerance
 		)
@@ -534,36 +530,6 @@ class TupleVariation(object):
 
 			if optimized_len < unoptimized_len:
 				self.coordinates = var_opt.coordinates
-
-	def __iadd__(self, other):
-		if not isinstance(other, TupleVariation):
-			return NotImplemented
-		if self.axes != other.axes:
-			raise ValueError(
-				"TupleVariations have different axes: %r != %r"
-				% (self.axes, other.axes)
-			)
-		deltas1 = self.coordinates
-		deltas2 = other.coordinates
-		if len(deltas1) != len(deltas2):
-			raise ValueError(
-				"TupleVariations have different length: %d != %d"
-				% (len(deltas1), len(deltas2))
-			)
-		deltaType1 = self.checkDeltaType()
-		deltaType2 = other.checkDeltaType()
-		assert deltaType1 == deltaType2
-		if deltaType1 == "gvar" and None in deltas1 or None in deltas2:
-			raise ValueError("'gvar' tuple has inferred deltas; cannot merge")
-		for i, (d1, d2) in enumerate(zip(deltas1, deltas2)):
-			if d1 is not None and d2 is not None:
-				if deltaType1 == "gvar":
-					deltas1[i] = (d1[0] + d2[0], d1[1] + d2[1])
-				else:
-					deltas1[i] = d1 + d2
-			elif d1 is None:
-				deltas1[i] = d2
-		return self
 
 
 def decompileSharedTuples(axisTags, sharedTupleCount, data, offset):
