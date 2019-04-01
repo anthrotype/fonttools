@@ -2,6 +2,7 @@ from __future__ import print_function, division, absolute_import
 from fontTools.misc.py23 import *
 from fontTools.misc.fixedTools import fixedToFloat, floatToFixed, otRound
 from fontTools.misc.textTools import safeEval
+from fontTools.varLib.iup import iup_delta, iup_delta_optimize
 import array
 import io
 import logging
@@ -54,10 +55,7 @@ class TupleVariation(object):
 		If the result is False, the TupleVariation can be omitted from the font
 		without making any visible difference.
 		"""
-		for c in self.coordinates:
-			if c is not None:
-				return True
-		return False
+		return any(c is not None for c in self.coordinates)
 
 	def toXML(self, writer, axisTags):
 		writer.begintag("tuple")
@@ -446,14 +444,23 @@ class TupleVariation(object):
 			size += axisCount * 4
 		return size
 
-	def scaleDeltas(self, scalar):
-		if scalar == 1.0:
-			return  # no change
+	def checkDeltaType(self):
 		# check if deltas are (x, y) as in gvar, or single values as in cvar
 		firstDelta = next((c for c in self.coordinates if c is not None), None)
 		if firstDelta is None:
-			return  # nothing to scale
+			return  # empty or has no impact
 		if type(firstDelta) is tuple and len(firstDelta) == 2:
+			return "gvar"
+		elif type(firstDelta) in (int, float):
+			return "cvar"
+		else:
+			raise TypeError("invalid type of delta: %s" % type(firstDelta))
+
+	def scaleDeltas(self, scalar):
+		if scalar == 1.0:
+			return  # no change
+		deltaType = self.checkDeltaType()
+		if deltaType == "gvar":
 			if scalar == 0:
 				self.coordinates = [(0, 0)] * len(self.coordinates)
 			else:
@@ -461,7 +468,7 @@ class TupleVariation(object):
 					(d[0] * scalar, d[1] * scalar) if d is not None else None
 					for d in self.coordinates
 				]
-		elif type(firstDelta) in (int, float):
+		else:
 			if scalar == 0:
 				self.coordinates = [0] * len(self.coordinates)
 			else:
@@ -469,25 +476,94 @@ class TupleVariation(object):
 					d * scalar if d is not None else None
 					for d in self.coordinates
 				]
-		else:
-			raise TypeError("invalid type of delta: %s" % type(firstDelta))
 
 	def roundDeltas(self):
-		# check if deltas are (x, y) as in gvar, or single values as in cvar
-		firstDelta = next((c for c in self.coordinates if c is not None), None)
-		if firstDelta is None:
-			return  # nothing to round
-		if type(firstDelta) is tuple and len(firstDelta) == 2:
+		deltaType = self.checkDeltaType()
+		if deltaType == "gvar":
 			self.coordinates = [
 				(otRound(d[0]), otRound(d[1])) if d is not None else None
 				for d in self.coordinates
 			]
-		elif type(firstDelta) in (int, float):
+		else:
 			self.coordinates = [
 				otRound(d) if d is not None else None for d in self.coordinates
 			]
-		else:
-			raise TypeError("invalid type of delta: %s" % type(firstDelta))
+
+	def hasInferredDeltas(self):
+		return (
+		    None in self.coordinates and self.hasImpact()
+		    and self.checkDeltaType() == "gvar"
+		)
+
+	def calcInferredDeltas(self, origCoords, endPts):
+		deltaType = self.checkDeltaType()
+		if deltaType is None:
+			return
+		elif deltaType != "gvar":
+			raise TypeError(
+			    "Only 'gvar' TupleVariation can have inferred deltas"
+			)
+		if None in self.coordinates:
+			self.coordinates = iup_delta(self.coordinates, origCoords, endPts)
+
+	def optimize(self, origCoords, endPts, tolerance=0.5):
+		deltaType = self.checkDeltaType()
+		if deltaType is None:
+			return
+		elif deltaType != "gvar":
+			raise TypeError(
+			    "Only 'gvar' TupleVariation can have inferred deltas"
+			)
+		delta_opt = iup_delta_optimize(
+		    self.coordinates, origCoords, endPts, tolerance=tolerance
+		)
+		if None in delta_opt:
+			if all(d is None for d in delta_opt):
+				# Fix for macOS composites
+				# https://github.com/fonttools/fonttools/issues/1381
+				delta_opt = [(0, 0)] + [None] * (len(delta_opt) - 1)
+			# Use "optimized" version only if smaller...
+			var_opt = TupleVariation(self.axes, delta_opt)
+
+			# Shouldn't matter that this is different from fvar...?
+			axis_tags = sorted(self.axes.keys())
+			tupleData, auxData, _ = self.compile(axis_tags, [], None)
+			unoptimized_len = len(tupleData) + len(auxData)
+			tupleData, auxData, _ = var_opt.compile(axis_tags, [], None)
+			optimized_len = len(tupleData) + len(auxData)
+
+			if optimized_len < unoptimized_len:
+				self.coordinates = var_opt.coordinates
+
+	def __iadd__(self, other):
+		if not isinstance(other, TupleVariation):
+			return NotImplemented
+		if self.axes != other.axes:
+			raise ValueError(
+				"TupleVariations have different axes: %r != %r"
+				% (self.axes, other.axes)
+			)
+		deltas1 = self.coordinates
+		deltas2 = other.coordinates
+		if len(deltas1) != len(deltas2):
+			raise ValueError(
+				"TupleVariations have different length: %d != %d"
+				% (len(deltas1), len(deltas2))
+			)
+		deltaType1 = self.checkDeltaType()
+		deltaType2 = other.checkDeltaType()
+		assert deltaType1 == deltaType2
+		if deltaType1 == "gvar" and None in deltas1 or None in deltas2:
+			raise ValueError("'gvar' tuple has inferred deltas; cannot merge")
+		for i, (d1, d2) in enumerate(zip(deltas1, deltas2)):
+			if d1 is not None and d2 is not None:
+				if deltaType1 == "gvar":
+					deltas1[i] = (d1[0] + d2[0], d1[1] + d2[1])
+				else:
+					deltas1[i] = d1 + d2
+			elif d1 is None:
+				deltas1[i] = d2
+		return self
 
 
 def decompileSharedTuples(axisTags, sharedTupleCount, data, offset):
