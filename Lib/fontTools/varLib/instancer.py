@@ -162,23 +162,21 @@ def instantiateGvar(varfont, location, optimize=True):
 
 
 def setCvarDeltas(cvt, deltas):
-    # copy cvt values internally represented as array.array("h") to a list,
-    # accumulating deltas (that may be float since we scaled them) and only
-    # do the rounding to integer once at the end to reduce rounding errors
-    values = list(cvt)
     for i, delta in enumerate(deltas):
         if delta is not None:
-            values[i] += delta
-    for i, v in enumerate(values):
-        cvt[i] = otRound(v)
+            cvt[i] += otRound(delta)
 
 
 def instantiateCvar(varfont, location):
     log.info("Instantiating cvt/cvar tables")
+
     cvar = varfont["cvar"]
-    cvt = varfont["cvt "]
+
     defaultDeltas = instantiateTupleVariationStore(cvar.variations, location)
-    setCvarDeltas(cvt, defaultDeltas)
+
+    if defaultDeltas:
+        setCvarDeltas(varfont["cvt "], defaultDeltas)
+
     if not cvar.variations:
         del varfont["cvar"]
 
