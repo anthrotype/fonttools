@@ -488,12 +488,6 @@ class TupleVariation(object):
 				otRound(d) if d is not None else None for d in self.coordinates
 			]
 
-	def hasInferredDeltas(self):
-		return (
-		    None in self.coordinates and self.hasImpact()
-		    and self.checkDeltaType() == "gvar"
-		)
-
 	def calcInferredDeltas(self, origCoords, endPts):
 		from fontTools.varLib.iup import iup_delta
 
@@ -507,7 +501,7 @@ class TupleVariation(object):
 	def optimize(self, origCoords, endPts, tolerance=0.5):
 		from fontTools.varLib.iup import iup_delta_optimize
 
-		if self.hasInferredDeltas():
+		if None in self.coordinates:
 			return  # already optimized
 
 		deltaOpt = iup_delta_optimize(
