@@ -39,8 +39,8 @@ def instantiateTupleVariationStore(variations, location, origCoords=None, endPts
         if scalar == 0.0:
             # no influence, drop the TupleVariation
             continue
-        elif scalar != 1.0:
-            var.scaleDeltas(scalar)
+
+        var.scaleDeltas(scalar)
 
         # group TupleVariations by overlapping "tents" (can be empty if all the axes
         # were instanced)
