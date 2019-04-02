@@ -496,6 +496,11 @@ class TupleVariation(object):
 			    "Only 'gvar' TupleVariation can have inferred deltas"
 			)
 		if None in self.coordinates:
+			if len(self.coordinates) != len(origCoords):
+				raise ValueError(
+					"Expected len(origCoords) == %d; found %d"
+					% (len(self.coordinates), len(origCoords))
+				)
 			self.coordinates = iup_delta(self.coordinates, origCoords, endPts)
 
 	def optimize(self, origCoords, endPts, tolerance=0.5):

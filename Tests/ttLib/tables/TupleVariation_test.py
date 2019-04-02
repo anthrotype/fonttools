@@ -734,6 +734,35 @@ class TupleVariationTest(unittest.TestCase):
 		var.roundDeltas()
 		self.assertEqual(var.coordinates, [(56, 100), None, (100, 100)])
 
+	def test_calcInferredDeltas(self):
+		var = TupleVariation({}, [(0, 0), None, None, None])
+		coords = [(1, 1), (1, 1), (1, 1), (1, 1)]
+
+		var.calcInferredDeltas(coords, [])
+
+		self.assertEqual(
+			var.coordinates,
+			[(0, 0), (0, 0), (0, 0), (0, 0)]
+		)
+
+	def test_calcInferredDeltas_invalid(self):
+		# cvar tuples can't have inferred deltas
+		with self.assertRaises(TypeError):
+			TupleVariation({}, [0]).calcInferredDeltas([], [])
+
+		# origCoords must have same length as self.coordinates
+		with self.assertRaises(ValueError):
+			TupleVariation({}, [(0, 0), None]).calcInferredDeltas([], [])
+
+		# at least 4 phantom points required
+		with self.assertRaises(AssertionError):
+			TupleVariation({}, [(0, 0), None]).calcInferredDeltas([(0, 0), (0, 0)], [])
+
+		with self.assertRaises(AssertionError):
+			TupleVariation({}, [(0, 0)] + [None]*5).calcInferredDeltas(
+				[(0, 0)]*6,
+				[1, 0]  # endPts not in increasing order
+			)
 
 if __name__ == "__main__":
 	import sys
