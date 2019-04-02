@@ -113,13 +113,13 @@ def instantiateGvarGlyph(varfont, glyphname, location, optimize=True):
     gvar = varfont["gvar"]
     varStore = gvar.variations[glyphname]
 
-    origCoords, endPts = _getGlyphCoordinatesAndEndPts(varfont, glyphname)
+    coordinates, endPts = _getGlyphCoordinatesAndEndPts(varfont, glyphname)
     defaultDeltas = instantiateTupleVariationStore(
-        varStore, location, origCoords, endPts
+        varStore, location, coordinates, endPts
     )
 
     if defaultDeltas:
-        coordinates = origCoords + GlyphCoordinates(defaultDeltas)
+        coordinates += GlyphCoordinates(defaultDeltas)
         varfont["glyf"].setCoordinates(glyphname, coordinates, varfont)
 
     if not varStore:
@@ -128,7 +128,7 @@ def instantiateGvarGlyph(varfont, glyphname, location, optimize=True):
 
     if optimize:
         for var in varStore:
-            var.optimize(origCoords, endPts)
+            var.optimize(coordinates, endPts)
 
 
 def instantiateGvar(varfont, location, optimize=True):
