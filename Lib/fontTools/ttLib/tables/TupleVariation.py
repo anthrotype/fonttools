@@ -510,26 +510,26 @@ class TupleVariation(object):
 		if self.hasInferredDeltas():
 			return  # already optimized
 
-		delta_opt = iup_delta_optimize(
+		deltaOpt = iup_delta_optimize(
 		    self.coordinates, origCoords, endPts, tolerance=tolerance
 		)
-		if None in delta_opt:
-			if all(d is None for d in delta_opt):
+		if None in deltaOpt:
+			if all(d is None for d in deltaOpt):
 				# Fix for macOS composites
 				# https://github.com/fonttools/fonttools/issues/1381
-				delta_opt = [(0, 0)] + [None] * (len(delta_opt) - 1)
+				deltaOpt = [(0, 0)] + [None] * (len(deltaOpt) - 1)
 			# Use "optimized" version only if smaller...
-			var_opt = TupleVariation(self.axes, delta_opt)
+			varOpt = TupleVariation(self.axes, deltaOpt)
 
 			# Shouldn't matter that this is different from fvar...?
-			axis_tags = sorted(self.axes.keys())
-			tupleData, auxData, _ = self.compile(axis_tags, [], None)
-			unoptimized_len = len(tupleData) + len(auxData)
-			tupleData, auxData, _ = var_opt.compile(axis_tags, [], None)
-			optimized_len = len(tupleData) + len(auxData)
+			axisTags = sorted(self.axes.keys())
+			tupleData, auxData, _ = self.compile(axisTags, [], None)
+			unoptimizedLength = len(tupleData) + len(auxData)
+			tupleData, auxData, _ = varOpt.compile(axisTags, [], None)
+			optimizedLength = len(tupleData) + len(auxData)
 
-			if optimized_len < unoptimized_len:
-				self.coordinates = var_opt.coordinates
+			if optimizedLength < unoptimizedLength:
+				self.coordinates = varOpt.coordinates
 
 
 def decompileSharedTuples(axisTags, sharedTupleCount, data, offset):
