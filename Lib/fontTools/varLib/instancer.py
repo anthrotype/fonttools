@@ -53,13 +53,13 @@ def instantiateTupleVariationStore(variations, location, origCoords=None, endPts
     defaultDeltas = None
     newVariations = []
     for axes, varGroup in varGroups.items():
-        if len(varGroup) > 1:
-            # merge TupleVariation having the same axes
-            var = _mergeTupleVariations(varGroup, origCoords, endPts)
-        else:
-            var = varGroup[0]
+        var = varGroup.pop(0)
 
-        if not axes:
+        # merge TupleVariations having the same (or none) axes
+        if varGroup:
+            var.sumDeltas(varGroup, origCoords, endPts)
+
+        if axes is ():
             # if no axis is left in the TupleVariation, we drop it and its deltas
             # will be later added to the default instance; we need to interpolate
             # any inferred (i.e. None) deltas to be able to sum the coordinates
@@ -72,35 +72,6 @@ def instantiateTupleVariationStore(variations, location, origCoords=None, endPts
 
     variations[:] = newVariations
     return defaultDeltas or []
-
-
-def _mergeTupleVariations(variations, origCoords=None, endPts=None):
-    variations = iter(variations)
-    first = next(variations)
-    # to sum the gvar tuples we need to first interpolate any inferred deltas
-    if origCoords is not None:
-        first.calcInferredDeltas(origCoords, endPts)
-    deltas1 = first.coordinates
-    length = len(deltas1)
-    deltaRange = range(length)
-    deltaType = first.checkDeltaType()
-    for other in variations:
-        if origCoords is not None:
-            other.calcInferredDeltas(origCoords, endPts)
-        deltas2 = other.coordinates
-        assert len(deltas2) == length
-        for i, d2 in zip(deltaRange, deltas2):
-            d1 = deltas1[i]
-            if d1 is not None and d2 is not None:
-                if deltaType == "gvar":
-                    deltas1[i] = (d1[0] + d2[0], d1[1] + d2[1])
-                else:
-                    deltas1[i] = d1 + d2
-            else:
-                assert deltaType != "gvar"
-                if d1 is None and d2 is not None:
-                    deltas1[i] = d2
-    return first
 
 
 def _getGlyphCoordinatesAndEndPts(varfont, glyphname):
