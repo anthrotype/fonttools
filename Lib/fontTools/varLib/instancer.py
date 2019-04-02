@@ -78,19 +78,19 @@ def _mergeTupleVariations(variations, origCoords=None, endPts=None):
     variations = iter(variations)
     first = next(variations)
 
-    deltas1 = first.coordinates
-    deltaType1 = first.checkDeltaType()
     # to sum the gvar tuples we need to first interpolate any inferred deltas
     if origCoords is not None:
         first.calcInferredDeltas(origCoords, endPts)
+    deltas1 = first.coordinates
 
+    deltaType1 = first.checkDeltaType()
     length = len(deltas1)
     deltaRange = range(length)
     for other in variations:
-        deltas2 = other.coordinates
-        assert len(deltas2) == length
         if origCoords is not None:
             other.calcInferredDeltas(origCoords, endPts)
+        deltas2 = other.coordinates
+        assert len(deltas2) == length
         for i, d2 in zip(deltaRange, deltas2):
             d1 = deltas1[i]
             if d1 is not None and d2 is not None:
