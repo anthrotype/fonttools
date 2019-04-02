@@ -77,11 +77,9 @@ def instantiateTupleVariationStore(variations, location, origCoords=None, endPts
 def _mergeTupleVariations(variations, origCoords=None, endPts=None):
     variations = iter(variations)
     first = next(variations)
-
     # to sum the gvar tuples we need to first interpolate any inferred deltas
     if origCoords is not None:
         first.calcInferredDeltas(origCoords, endPts)
-
     deltas1 = first.coordinates
     length = len(deltas1)
     deltaRange = range(length)
