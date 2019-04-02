@@ -28,6 +28,10 @@ def _get_coordinates(varfont, glyphname):
 class InstantiateGvarTest(object):
     @pytest.mark.parametrize("glyph_name", ["hyphen"])
     @pytest.mark.parametrize(
+        "optimize",
+        [pytest.param(True, id="optimize"), pytest.param(False, id="no-optimize")],
+    )
+    @pytest.mark.parametrize(
         "location, expected",
         [
             pytest.param(
@@ -82,8 +86,8 @@ class InstantiateGvarTest(object):
             ),
         ],
     )
-    def test_pin_and_drop_axis(self, varfont, glyph_name, location, expected):
-        instancer.instantiateGvar(varfont, location)
+    def test_pin_and_drop_axis(self, varfont, glyph_name, location, expected, optimize):
+        instancer.instantiateGvar(varfont, location, optimize=optimize)
 
         assert _get_coordinates(varfont, glyph_name) == expected[glyph_name]
 
