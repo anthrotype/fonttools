@@ -110,7 +110,7 @@ class InstantiateCvarTest(object):
 
         assert list(varfont["cvt "].values) == expected
 
-        # check that the pinned axis has been dropped from gvar
+        # check that the pinned axis has been dropped from cvar
         pinned_axes = location.keys()
         assert not any(
             axis in t.axes for t in varfont["cvar"].variations for axis in pinned_axes
