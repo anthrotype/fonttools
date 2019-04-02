@@ -503,7 +503,7 @@ class TupleVariation(object):
 				)
 			self.coordinates = iup_delta(self.coordinates, origCoords, endPts)
 
-	def optimize(self, origCoords, endPts, tolerance=0.5):
+	def optimize(self, origCoords, endPts, tolerance=0.5, isComposite=False):
 		from fontTools.varLib.iup import iup_delta_optimize
 
 		if None in self.coordinates:
@@ -513,7 +513,7 @@ class TupleVariation(object):
 		    self.coordinates, origCoords, endPts, tolerance=tolerance
 		)
 		if None in deltaOpt:
-			if all(d is None for d in deltaOpt):
+			if isComposite and all(d is None for d in deltaOpt):
 				# Fix for macOS composites
 				# https://github.com/fonttools/fonttools/issues/1381
 				deltaOpt = [(0, 0)] + [None] * (len(deltaOpt) - 1)

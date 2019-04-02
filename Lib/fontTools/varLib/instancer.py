@@ -74,14 +74,10 @@ def instantiateTupleVariationStore(variations, location, origCoords=None, endPts
     return defaultDeltas or []
 
 
-def _getGlyphCoordinatesAndEndPts(varfont, glyphname):
-    glyf = varfont["glyf"]
-    origCoords, g = glyf.getCoordinatesAndControls(glyphname, varfont)
-    return origCoords, g.endPts
-
-
 def instantiateGvarGlyph(varfont, glyphname, location, optimize=True):
-    coordinates, endPts = _getGlyphCoordinatesAndEndPts(varfont, glyphname)
+    glyf = varfont["glyf"]
+    coordinates, ctrl = glyf.getCoordinatesAndControls(glyphname, varfont)
+    endPts = ctrl.endPts
 
     gvar = varfont["gvar"]
     tupleVarStore = gvar.variations[glyphname]
@@ -94,15 +90,16 @@ def instantiateGvarGlyph(varfont, glyphname, location, optimize=True):
         coordinates += GlyphCoordinates(defaultDeltas)
         # this will also set the hmtx advance widths and sidebearings from
         # the fourth-last and third-last phantom points (and glyph.xMin)
-        varfont["glyf"].setCoordinates(glyphname, coordinates, varfont)
+        glyf.setCoordinates(glyphname, coordinates, varfont)
 
     if not tupleVarStore:
         del gvar.variations[glyphname]
         return
 
     if optimize:
+        isComposite = glyf[glyphname].isComposite()
         for var in tupleVarStore:
-            var.optimize(coordinates, endPts)
+            var.optimize(coordinates, endPts, isComposite)
 
 
 def instantiateGvar(varfont, location, optimize=True):
