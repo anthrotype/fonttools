@@ -112,24 +112,25 @@ def _getGlyphCoordinatesAndEndPts(varfont, glyphname):
 
 
 def instantiateGvarGlyph(varfont, glyphname, location, optimize=True):
-    gvar = varfont["gvar"]
-    varStore = gvar.variations[glyphname]
-
     coordinates, endPts = _getGlyphCoordinatesAndEndPts(varfont, glyphname)
+
+    gvar = varfont["gvar"]
+    tupleVarStore = gvar.variations[glyphname]
+
     defaultDeltas = instantiateTupleVariationStore(
-        varStore, location, coordinates, endPts
+        tupleVarStore, location, coordinates, endPts
     )
 
     if defaultDeltas:
         coordinates += GlyphCoordinates(defaultDeltas)
         varfont["glyf"].setCoordinates(glyphname, coordinates, varfont)
 
-    if not varStore:
+    if not tupleVarStore:
         del gvar.variations[glyphname]
         return
 
     if optimize:
-        for var in varStore:
+        for var in tupleVarStore:
             var.optimize(coordinates, endPts)
 
 
