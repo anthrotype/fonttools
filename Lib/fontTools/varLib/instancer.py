@@ -81,11 +81,11 @@ def _mergeTupleVariations(variations, origCoords=None, endPts=None):
     # to sum the gvar tuples we need to first interpolate any inferred deltas
     if origCoords is not None:
         first.calcInferredDeltas(origCoords, endPts)
-    deltas1 = first.coordinates
 
-    deltaType1 = first.checkDeltaType()
+    deltas1 = first.coordinates
     length = len(deltas1)
     deltaRange = range(length)
+    deltaType = first.checkDeltaType()
     for other in variations:
         if origCoords is not None:
             other.calcInferredDeltas(origCoords, endPts)
@@ -94,12 +94,14 @@ def _mergeTupleVariations(variations, origCoords=None, endPts=None):
         for i, d2 in zip(deltaRange, deltas2):
             d1 = deltas1[i]
             if d1 is not None and d2 is not None:
-                if deltaType1 == "gvar":
+                if deltaType == "gvar":
                     deltas1[i] = (d1[0] + d2[0], d1[1] + d2[1])
                 else:
                     deltas1[i] = d1 + d2
-            elif d1 is None:
-                deltas1[i] = d2
+            else:
+                assert deltaType != "gvar"
+                if d1 is None and d2 is not None:
+                    deltas1[i] = d2
     return first
 
 
