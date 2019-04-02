@@ -123,6 +123,8 @@ def instantiateGvarGlyph(varfont, glyphname, location, optimize=True):
 
     if defaultDeltas:
         coordinates += GlyphCoordinates(defaultDeltas)
+        # this will also set the hmtx advance widths and sidebearings from
+        # the fourth-last and third-last phantom points (and glyph.xMin)
         varfont["glyf"].setCoordinates(glyphname, coordinates, varfont)
 
     if not tupleVarStore:
