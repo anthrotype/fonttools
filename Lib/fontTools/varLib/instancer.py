@@ -150,20 +150,20 @@ def setMvarDeltas(varfont, deltaArray):
         tableTag, itemName = MVAR_ENTRIES[mvarTag]
         varDataIndex = rec.VarIdx >> 16
         itemIndex = rec.VarIdx & 0xFFFF
-        deltaRow = deltaArray[varDataIndex][itemIndex]
-        delta = sum(deltaRow)
+        delta = deltaArray[varDataIndex][itemIndex]
         if delta != 0:
             setattr(
                 varfont[tableTag],
                 itemName,
-                getattr(varfont[tableTag], itemName) + otRound(delta),
+                getattr(varfont[tableTag], itemName) + delta,
             )
 
 
-def instantiateMvar(varfont, location):
+def instantiateMvar(varfont, location, optimize=True):
     log.info("Instantiating MVAR table")
 
-    varStore = varfont["MVAR"].table.VarStore
+    mvar = varfont["MVAR"].table
+    varStore = mvar.VarStore
     fvarAxes = varfont["fvar"].axes
     defaultDeltas = instantiateItemVariationStore(varStore, fvarAxes, location)
     setMvarDeltas(varfont, defaultDeltas)
@@ -171,6 +171,10 @@ def instantiateMvar(varfont, location):
     if not varStore.VarRegionList.Region:
         # Delete table if no more regions left.
         del varfont["MVAR"]
+    elif optimize:
+        varIndexMapping = varStore.optimize()
+        for rec in mvar.ValueRecord:
+            rec.VarIdx = varIndexMapping[rec.VarIdx]
 
 
 def _getVarRegionAxes(region, fvarAxes):
@@ -196,53 +200,69 @@ def _getVarRegionScalar(location, regionAxes):
 
 
 def _scaleVarDataDeltas(varData, regionScalars):
-    # multiply all varData deltas in-place by the corresponding region scalar
-    varRegionCount = len(varData.VarRegionIndex)
-    scalars = [regionScalars[regionIndex] for regionIndex in varData.VarRegionIndex]
+    # multiply all varData deltas in-place by the corresponding region scalar, and
+    # remove regions whose scalar is 0
+    scalars = [regionScalars[ri] for ri in varData.VarRegionIndex]
     for item in varData.Item:
-        assert len(item) == varRegionCount
-        item[:] = [delta * scalar for delta, scalar in zip(item, scalars)]
-
-
-def _getVarDataDeltasForRegions(varData, regionIndices, rounded=False):
-    # Get only the deltas that correspond to the given regions (optionally, rounded).
-    # Returns: list of lists of float
-    varRegionIndices = varData.VarRegionIndex
-    deltaSets = []
-    for item in varData.Item:
-        deltaSets.append(
-            [
-                delta if not rounded else otRound(delta)
-                for regionIndex, delta in zip(varRegionIndices, item)
-                if regionIndex in regionIndices
-            ]
-        )
-    return deltaSets
-
-
-def _subsetVarStoreRegions(varStore, regionIndices):
-    # drop regions not in regionIndices
-    newVarDatas = []
-    for varData in varStore.VarData:
-        if regionIndices.isdisjoint(varData.VarRegionIndex):
-            # drop VarData subtable if we remove all the regions referenced by it
-            continue
-
-        # only retain delta-set columns that correspond to the given regions
-        varData.Item = _getVarDataDeltasForRegions(varData, regionIndices, rounded=True)
-        varData.VarRegionIndex = [
-            ri for ri in varData.VarRegionIndex if ri in regionIndices
+        item[:] = [
+            delta * scalar for delta, scalar in zip(item, scalars) if scalar != 0
         ]
-        varData.VarRegionCount = len(varData.VarRegionIndex)
+    varData.VarRegionIndex = [
+        ri for ri in varData.VarRegionIndex if regionScalars[ri] != 0
+    ]
+    varData.VarRegionCount = len(varData.VarRegionIndex)
 
-        # recalculate NumShorts, reordering columns as necessary
-        varData.optimize()
-        newVarDatas.append(varData)
 
-    varStore.VarData = newVarDatas
-    varStore.VarDataCount = len(varStore.VarData)
-    # remove unused regions from VarRegionList
-    varStore.prune_regions()
+def _popVarDataDeltas(varData, regionIndex):
+    # For each delta-set row, pop the column that correspond to the region index.
+    # Returns: list of deltas, one per VarData item.
+    varRegionIndices = varData.VarRegionIndex
+    try:
+        regionColumn = varRegionIndices.index(regionIndex)
+    except ValueError:
+        return [0] * varData.ItemCount
+    deltas = [item.pop(regionColumn) for item in varData.Item]
+    del varData.VarRegionIndex[regionColumn]
+    varData.VarRegionCount = len(varData.VarRegionIndex)
+    return deltas
+
+
+def _mergeVarDataRegions(varData, regionMap):
+    varRegionIndices = varData.VarRegionIndex
+    keyRegionIndices = [regionMap.get(ri, ri) for ri in varRegionIndices]
+    columns = [keyRegionIndices.index(ri) for ri in keyRegionIndices]
+    varData.Item = _mergeVarDataItemColumns(varData.Item, columns)
+    varData.VarRegionIndex = list(
+        collections.OrderedDict.fromkeys(ri for ri in keyRegionIndices)
+    )
+    varData.VarRegionCount = len(varData.VarRegionIndex)
+
+
+def _mergeVarDataItemColumns(items, columns):
+    keyColumns = set(columns)
+    newItems = []
+    for item in items:
+        newItem = [0] * len(item)
+        for col, delta in zip(columns, item):
+            newItem[col] += delta
+        newItem = [otRound(d) for col, d in enumerate(newItem) if col in keyColumns]
+        newItems.append(newItem)
+    return newItems
+
+
+def _groupVarRegionsWithSameAxes(regions):
+    keyRegions = {}
+    regionTree = {}
+    for regionIndex, regionAxes in enumerate(regions):
+        axes = tuple(
+            (axisTag, axis.StartCoord, axis.PeakCoord, axis.EndCoord)
+            for axisTag, axis in regionAxes.items()
+            if axis.PeakCoord != 0
+        )
+        regionTree[regionIndex] = keyRegions.setdefault(axes, regionIndex)
+    # If all axes in a region are pinned, its deltas are added to the default instance
+    defaultRegionIndex = keyRegions.get(tuple())
+    return regionTree, defaultRegionIndex
 
 
 def instantiateItemVariationStore(varStore, fvarAxes, location):
@@ -260,26 +280,24 @@ def instantiateItemVariationStore(varStore, fvarAxes, location):
         for axisTag, axis in axes.items():
             if axisTag in location:
                 axis.StartCoord, axis.PeakCoord, axis.EndCoord = (0, 0, 0)
-    # If all axes in a region are pinned, its deltas are added to the default instance
-    defaultRegionIndices = {
-        regionIndex
-        for regionIndex, axes in enumerate(regions)
-        if all(axis.PeakCoord == 0 for axis in axes.values())
-    }
+
+    # merge regions left with the same axes
+    regionMap, defaultRegionIndex = _groupVarRegionsWithSameAxes(regions)
+    for varData in varStore.VarData:
+        _mergeVarDataRegions(varData, regionMap)
+
     # Collect the default deltas into a two-dimension array, with outer/inner indices
     # corresponding to a VarData subtable and a deltaset row within that table.
     defaultDeltaArray = [
-        _getVarDataDeltasForRegions(varData, defaultRegionIndices)
-        for varData in varStore.VarData
+        _popVarDataDeltas(varData, defaultRegionIndex) for varData in varStore.VarData
     ]
 
-    # drop default regions, or those whose influence at the pinned location is 0
-    newRegionIndices = {
-        regionIndex
-        for regionIndex in range(len(varStore.VarRegionList.Region))
-        if regionIndex not in defaultRegionIndices and regionScalars[regionIndex] != 0
-    }
-    _subsetVarStoreRegions(varStore, newRegionIndices)
+    # remove unused regions from VarRegionList
+    varStore.prune_regions()
+
+    if varStore.VarRegionList.Region:
+        for varData in varStore.VarData:
+            varData.calculateNumShorts(optimize=False)
 
     return defaultDeltaArray
 
@@ -398,7 +416,7 @@ def instantiateVariableFont(varfont, axis_limits, inplace=False, optimize=True):
         instantiateCvar(varfont, axis_limits)
 
     if "MVAR" in varfont:
-        instantiateMvar(varfont, axis_limits)
+        instantiateMvar(varfont, axis_limits, optimize=optimize)
 
     instantiateFeatureVariations(varfont, axis_limits)
 
@@ -463,7 +481,7 @@ def parseArgs(args):
         "--no-optimize",
         dest="optimize",
         action="store_false",
-        help="do not perform IUP optimization on the remaining gvar TupleVariations",
+        help="do not perform IUP and VarStore optimizations (faster but larger size)",
     )
     logging_group = parser.add_mutually_exclusive_group(required=False)
     logging_group.add_argument(
