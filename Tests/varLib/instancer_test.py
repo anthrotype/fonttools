@@ -2,6 +2,7 @@ from __future__ import print_function, division, absolute_import
 from fontTools.misc.py23 import *
 from fontTools import ttLib
 from fontTools.ttLib.tables import _f_v_a_r
+from fontTools.ttLib.tables.TupleVariation import TupleVariation
 from fontTools.varLib import instancer
 from fontTools.varLib.mvar import MVAR_ENTRIES
 from fontTools.varLib import builder
@@ -22,6 +23,21 @@ def varfont():
 @pytest.fixture(params=[True, False], ids=["optimize", "no-optimize"])
 def optimize(request):
     return request.param
+
+
+@pytest.fixture
+def fvarAxes():
+    wght = _f_v_a_r.Axis()
+    wght.axisTag = Tag("wght")
+    wght.minValue = 100
+    wght.defaultValue = 400
+    wght.maxValue = 900
+    wdth = _f_v_a_r.Axis()
+    wdth.axisTag = Tag("wdth")
+    wdth.minValue = 70
+    wdth.defaultValue = 100
+    wdth.maxValue = 100
+    return [wght, wdth]
 
 
 def _get_coordinates(varfont, glyphname):
@@ -262,132 +278,7 @@ class InstantiateItemVariationStoreTest(object):
         region = builder.buildVarRegion(regionAxes, axisOrder)
         fvarAxes = [SimpleNamespace(axisTag=tag) for tag in axisOrder]
 
-        result = instancer._getVarRegionAxes(region, fvarAxes)
-
-        assert {
-            axisTag: (axis.StartCoord, axis.PeakCoord, axis.EndCoord)
-            for axisTag, axis in result.items()
-        } == regionAxes
-
-    @pytest.mark.parametrize(
-        "location, regionAxes, expected",
-        [
-            ({"wght": 0.5}, {"wght": (0.0, 1.0, 1.0)}, 0.5),
-            ({"wght": 0.5}, {"wght": (0.0, 1.0, 1.0), "wdth": (-1.0, -1.0, 0.0)}, 0.5),
-            (
-                {"wght": 0.5, "wdth": -0.5},
-                {"wght": (0.0, 1.0, 1.0), "wdth": (-1.0, -1.0, 0.0)},
-                0.25,
-            ),
-            ({"wght": 0.5, "wdth": -0.5}, {"wght": (0.0, 1.0, 1.0)}, 0.5),
-            ({"wght": 0.5}, {"wdth": (-1.0, -1.0, 1.0)}, 1.0),
-        ],
-    )
-    def test_getVarRegionScalar(self, location, regionAxes, expected):
-        varRegionAxes = {
-            axisTag: builder.buildVarRegionAxis(support)
-            for axisTag, support in regionAxes.items()
-        }
-
-        assert instancer._getVarRegionScalar(location, varRegionAxes) == expected
-
-    def test_scaleVarDataDeltas(self):
-        regionScalars = [0.0, 0.5, 1.0]
-        varData = builder.buildVarData(
-            [1, 0], [[100, 200], [-100, -200]], optimize=False
-        )
-
-        instancer._scaleVarDataDeltas(varData, regionScalars)
-
-        assert varData.Item == [[50], [-50]]
-
-    def test_popVarDataDeltas(self):
-        varData = builder.buildVarData([1, 0], [[34, 68], [-100, -200]], optimize=False)
-        assert instancer._popVarDataDeltas(varData, 1) == [34, -100]
-        assert varData.VarRegionCount == 1
-
-        varData = builder.buildVarData([1, 0], [[34, 68], [-100, -200]], optimize=False)
-        assert instancer._popVarDataDeltas(varData, 0) == [68, -200]
-        assert varData.VarRegionCount == 1
-
-        varData = builder.buildVarData([1, 0], [[34, 68], [-100, -200]], optimize=False)
-        assert instancer._popVarDataDeltas(varData, 2) == [0, 0]  # missing
-        assert varData.VarRegionCount == 2
-
-    def test_mergeVarDataRegions(self):
-        varData = builder.buildVarData(
-            [3, 1, 2, 0, 4], [[12, 34, 56, 78, 0], [91, 23, 45, 67, -1]]
-        )
-
-        instancer._mergeVarDataRegions(varData, [0, 0, 0, 3, 4])
-
-        assert varData.VarRegionIndex == [3, 0, 4]
-        assert varData.Item == [[12, 34 + 56 + 78, 0], [91, 23 + 45 + 67, -1]]
-
-    def test_mergeVarDataItemColumns(self):
-        assert instancer._mergeVarDataItemColumns([[-100, 200, 300]], [0, 1, 2]) == [
-            [-100, 200, 300]
-        ]
-        assert instancer._mergeVarDataItemColumns([[-100, 200, 300]], [0, 0, 2]) == [
-            [100, 300]
-        ]
-        assert instancer._mergeVarDataItemColumns([[-100, 200, 300]], [0, 1, 0]) == [
-            [200, 200]
-        ]
-        assert instancer._mergeVarDataItemColumns([[-100, 200, 300]], [0, 0, 0]) == [
-            [400]
-        ]
-
-    @pytest.mark.parametrize(
-        "regions, expected",
-        [
-            (
-                [
-                    {"wght": (-1.0, -1.0, 0)},
-                    {"wght": (-1.0, -1.0, 0), "wdth": (0, 1.0, 1.0)},
-                    {"wght": (-1.0, -1.0, 0), "wdth": (0, 1.0, 1.0), "opsz": (0, 0, 0)},
-                ],
-                ([0, 1, 1], None),
-            ),
-            (
-                [
-                    {"wght": (-1.0, -1.0, 0.0)},
-                    {},
-                    {"opsz": (0, 0, 0)},
-                    {"wght": (-1.0, -1.0, 0.0), "opsz": (0, 0, 0)},
-                ],
-                ([0, 1, 1, 0], 1),
-            ),
-            (
-                [
-                    {"wght": (-1.0, -1.0, 0.0)},
-                    {"wght": (0.0, 1.0, 1.0)},
-                    {"wdth": (0, 1.0, 1.0)},
-                    {"opsz": (0, 0.5, 1.0)},
-                ],
-                ([0, 1, 2, 3], None),
-            ),
-        ],
-    )
-    def test_groupVarRegionsWithSameAxes(self, regions, expected):
-        axisOrder = sorted(set().union(*regions))
-        regionList = builder.buildVarRegionList(regions, axisOrder)
-
-        assert instancer._groupVarRegionsWithSameAxes(regionList.Region) == expected
-
-    @pytest.fixture
-    def fvarAxes(self):
-        wght = _f_v_a_r.Axis()
-        wght.axisTag = Tag("wght")
-        wght.minValue = 100
-        wght.defaultValue = 400
-        wght.maxValue = 900
-        wdth = _f_v_a_r.Axis()
-        wdth.axisTag = Tag("wdth")
-        wdth.minValue = 70
-        wdth.defaultValue = 100
-        wdth.maxValue = 100
-        return [wght, wdth]
+        assert instancer._getVarRegionAxes(region, fvarAxes) == regionAxes
 
     @pytest.fixture
     def varStore(self):
@@ -433,3 +324,81 @@ class InstantiateItemVariationStoreTest(object):
 
         assert defaultDeltas == expected_deltas
         assert varStore.VarRegionList.RegionCount == num_regions
+
+
+def test_roundtrip_item_to_tuple_varstore(fvarAxes):
+    itemVarStore = builder.buildVarStore(
+        builder.buildVarRegionList(
+            [
+                {"wght": (-1.0, -1.0, 0)},
+                {"wght": (0, 0.5, 1.0)},
+                {"wght": (0.5, 1.0, 1.0)},
+                {"wdth": (-1.0, -1.0, 0)},
+                {"wght": (-1.0, -1.0, 0), "wdth": (-1.0, -1.0, 0)},
+                {"wght": (0, 0.5, 1.0), "wdth": (-1.0, -1.0, 0)},
+                {"wght": (0.5, 1.0, 1.0), "wdth": (-1.0, -1.0, 0)},
+            ],
+            ["wght", "wdth"],
+        ),
+        [
+            builder.buildVarData(
+                [0, 1, 2, 4, 5, 6],
+                [[10, -20, 30, -40, 50, -60], [70, -80, 90, -100, 110, -120]],
+            ),
+            builder.buildVarData([3, 4, 5, 6], [[5, -15, 25, -35], [45, -55, 65, -75]]),
+        ],
+    )
+
+    tupleVarStores = instancer._convertItemToTupleVarStore(itemVarStore, fvarAxes)
+
+    assert tupleVarStores == [
+        [
+            TupleVariation({"wght": (-1.0, -1.0, 0)}, [10, 70]),
+            TupleVariation({"wght": (0, 0.5, 1.0)}, [-20, -80]),
+            TupleVariation({"wght": (0.5, 1.0, 1.0)}, [30, 90]),
+            TupleVariation(
+                {"wght": (-1.0, -1.0, 0), "wdth": (-1.0, -1.0, 0)}, [-40, -100]
+            ),
+            TupleVariation({"wght": (0, 0.5, 1.0), "wdth": (-1.0, -1.0, 0)}, [50, 110]),
+            TupleVariation(
+                {"wght": (0.5, 1.0, 1.0), "wdth": (-1.0, -1.0, 0)}, [-60, -120]
+            ),
+        ],
+        [
+            TupleVariation({"wdth": (-1.0, -1.0, 0)}, [5, 45]),
+            TupleVariation(
+                {"wght": (-1.0, -1.0, 0), "wdth": (-1.0, -1.0, 0)}, [-15, -55]
+            ),
+            TupleVariation({"wght": (0, 0.5, 1.0), "wdth": (-1.0, -1.0, 0)}, [25, 65]),
+            TupleVariation(
+                {"wght": (0.5, 1.0, 1.0), "wdth": (-1.0, -1.0, 0)}, [-35, -75]
+            ),
+        ],
+    ]
+
+    itemCounts = [data.ItemCount for data in itemVarStore.VarData]
+    itemVarStore2 = instancer._convertTupleToItemVarStore(
+        tupleVarStores, fvarAxes, itemCounts
+    )
+
+    assert [
+        instancer._getVarRegionAxes(reg, fvarAxes)
+        for reg in itemVarStore2.VarRegionList.Region
+    ] == [
+        {"wght": (-1.0, -1.0, 0)},
+        {"wght": (0, 0.5, 1.0)},
+        {"wght": (0.5, 1.0, 1.0)},
+        {"wght": (-1.0, -1.0, 0), "wdth": (-1.0, -1.0, 0)},
+        {"wght": (0, 0.5, 1.0), "wdth": (-1.0, -1.0, 0)},
+        {"wght": (0.5, 1.0, 1.0), "wdth": (-1.0, -1.0, 0)},
+        {"wdth": (-1.0, -1.0, 0)},
+    ]
+
+    assert itemVarStore2.VarDataCount == 2
+    assert itemVarStore2.VarData[0].VarRegionIndex == [0, 1, 2, 3, 4, 5]
+    assert itemVarStore2.VarData[0].Item == [
+        [10, -20, 30, -40, 50, -60],
+        [70, -80, 90, -100, 110, -120],
+    ]
+    assert itemVarStore2.VarData[1].VarRegionIndex == [6, 3, 4, 5]
+    assert itemVarStore2.VarData[1].Item == [[5, -15, 25, -35], [45, -55, 65, -75]]

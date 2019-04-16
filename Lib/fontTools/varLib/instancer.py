@@ -15,7 +15,9 @@ from fontTools.misc.py23 import *
 from fontTools.misc.fixedTools import floatToFixedToFloat, otRound
 from fontTools.varLib.models import supportScalar, normalizeValue, piecewiseLinearMap
 from fontTools.ttLib import TTFont
+from fontTools.ttLib.tables.TupleVariation import TupleVariation
 from fontTools.ttLib.tables._g_l_y_f import GlyphCoordinates
+from fontTools.varLib import builder
 from fontTools.varLib.mvar import MVAR_ENTRIES
 import collections
 from copy import deepcopy
@@ -184,104 +186,66 @@ def _getVarRegionAxes(region, fvarAxes):
     assert len(fvarAxes) == len(region.VarRegionAxis)
     for fvarAxis, regionAxis in zip(fvarAxes, region.VarRegionAxis):
         if regionAxis.PeakCoord != 0:
-            axes[fvarAxis.axisTag] = regionAxis
+            axes[fvarAxis.axisTag] = (
+                regionAxis.StartCoord,
+                regionAxis.PeakCoord,
+                regionAxis.EndCoord,
+            )
     return axes
 
 
-def _getVarRegionScalar(location, regionAxes):
-    # compute partial product of per-axis scalars at location, excluding the axes
-    # that are not pinned
-    pinnedAxes = {
-        axisTag: (axis.StartCoord, axis.PeakCoord, axis.EndCoord)
-        for axisTag, axis in regionAxes.items()
-        if axisTag in location
-    }
-    return supportScalar(location, pinnedAxes)
-
-
-def _scaleVarDataDeltas(varData, regionScalars):
-    # multiply all varData deltas in-place by the corresponding region scalar, and
-    # remove regions whose scalar is 0
-    scalars = [regionScalars[ri] for ri in varData.VarRegionIndex]
-    for item in varData.Item:
-        item[:] = [
-            delta * scalar for delta, scalar in zip(item, scalars) if scalar != 0
-        ]
-    varData.VarRegionIndex = [
-        ri for ri in varData.VarRegionIndex if regionScalars[ri] != 0
+def _convertItemToTupleVarStore(itemVarStore, fvarAxes):
+    tupleRegions = [
+        _getVarRegionAxes(region, fvarAxes)
+        for region in itemVarStore.VarRegionList.Region
     ]
-    varData.VarRegionCount = len(varData.VarRegionIndex)
+    tupleVarStores = []
+    for varData in itemVarStore.VarData:
+        tupleVarData = []
+        varDataRegions = (tupleRegions[i] for i in varData.VarRegionIndex)
+        for axes, coordinates in zip(varDataRegions, zip(*varData.Item)):
+            tupleVarData.append(TupleVariation(axes, list(coordinates)))
+        tupleVarStores.append(tupleVarData)
+
+    return tupleVarStores
 
 
-def _popVarDataDeltas(varData, regionIndex):
-    # For each item's delta-set row, pop the column that correspond to regionIndex.
-    # If the region is not referenced by the varData.VarRegionIndex, return all zeros
-    # and keep varData as is.
-    # Returns: list of deltas, one per VarData item.
-    varRegionIndices = varData.VarRegionIndex
-    try:
-        regionColumn = varRegionIndices.index(regionIndex)
-    except ValueError:
-        return [0] * varData.ItemCount
-    deltas = [item.pop(regionColumn) for item in varData.Item]
-    del varData.VarRegionIndex[regionColumn]
-    varData.VarRegionCount = len(varData.VarRegionIndex)
-    return deltas
+def _convertTupleToItemVarStore(tupleVarStores, fvarAxes, itemCounts=None):
+    if itemCounts:
+        assert len(tupleVarStores) == len(itemCounts)
+    else:
+        itemCounts = [None] * len(tupleVarStores)
 
-
-def _mergeVarDataRegions(varData, regionMap):
-    # Merge VarData.Item columns whose associated region maps to the same key region.
-
-    # map VarData.Item columns to key regions
-    keyRegionIndices = [regionMap[ri] for ri in varData.VarRegionIndex]
-    # map key regions to the first VarData.Item column associated with it
-    columns = [keyRegionIndices.index(ri) for ri in keyRegionIndices]
-
-    varData.Item = _mergeVarDataItemColumns(varData.Item, columns)
-
-    # dedup keyRegionIndices list while keeping the original order
-    varData.VarRegionIndex = list(
-        collections.OrderedDict.fromkeys(ri for ri in keyRegionIndices)
+    axisOrder = [axis.axisTag for axis in fvarAxes]
+    regions = list(
+        collections.OrderedDict.fromkeys(
+            tuple(var.axes.items())
+            for variations in tupleVarStores
+            for var in variations
+        )
     )
-    varData.VarRegionCount = len(varData.VarRegionIndex)
+    varDatas = []
+    for variations, itemCount in zip(tupleVarStores, itemCounts):
+        if variations:
+            if itemCount is not None:
+                assert len(variations[0].coordinates) == itemCount
+            varRegionIndices = [
+                regions.index(tuple(var.axes.items())) for var in variations
+            ]
+            varDataItems = list(zip(*(var.coordinates for var in variations)))
+            varDatas.append(
+                builder.buildVarData(varRegionIndices, varDataItems, optimize=False)
+            )
+        else:
+            varDatas.append(builder.buildVarData([], [[] for _ in range(itemCount)]))
+    regionList = builder.buildVarRegionList(
+        [dict(region) for region in regions], axisOrder
+    )
+    itemVarStore = builder.buildVarStore(regionList, varDatas)
+    return itemVarStore
 
 
-def _mergeVarDataItemColumns(items, columns):
-    # 'columns' is a list of (possibly repeated) indexes, one for each column in the
-    # items' rows of deltas.
-    # Return new items with same-index columns summed together, and rounded.
-    keyColumns = set(columns)
-    newItems = []
-    for item in items:
-        newItem = [0] * len(item)
-        for col, delta in zip(columns, item):
-            newItem[col] += delta
-        newItems.append(
-            [otRound(delta) for col, delta in enumerate(newItem) if col in keyColumns]
-        )
-    return newItems
-
-
-def _groupVarRegionsWithSameAxes(regions):
-    # map from region axes to the index of "key" region (i.e. the first with a given
-    # axes configuration) in VarRegionList
-    keyRegions = {}
-    # map from region index to "key" region index
-    regionMap = []
-    for regionIndex, region in enumerate(regions):
-        axes = tuple(
-            (axisIndex, axis.StartCoord, axis.PeakCoord, axis.EndCoord)
-            for axisIndex, axis in enumerate(region.VarRegionAxis)
-            if axis.PeakCoord != 0
-        )
-        regionMap.append(keyRegions.setdefault(axes, regionIndex))
-    # index of the region in which all axes are disabled (PeekCoord == 0), whose deltas
-    # will be removed from VarStore and added to the default instance
-    defaultRegionIndex = keyRegions.get(tuple())
-    return regionMap, defaultRegionIndex
-
-
-def instantiateItemVariationStore(varStore, fvarAxes, location):
+def instantiateItemVariationStore(itemVarStore, fvarAxes, location):
     """ Compute deltas at partial location, and update varStore in-place.
 
     Remove regions in which all axes were instanced, and scale the deltas of
@@ -299,38 +263,26 @@ def instantiateItemVariationStore(varStore, fvarAxes, location):
         varIndexMapping: a mapping from old to new VarIdx after optimization (None if
             varStore was fully instanced thus left empty).
     """
-    regionList = varStore.VarRegionList.Region
-    # list of dicts mapping fvar axis tags to VarRegionAxis
-    regions = [_getVarRegionAxes(reg, fvarAxes) for reg in regionList]
-    # for each region, compute the scalar support of the axes to be pinned at the
-    # desired location, and scale the deltas accordingly
-    regionScalars = [_getVarRegionScalar(location, axes) for axes in regions]
-    for varData in varStore.VarData:
-        _scaleVarDataDeltas(varData, regionScalars)
+    itemCounts = [data.ItemCount for data in itemVarStore.VarData]
 
-    # disable the pinned axes by setting PeakCoord to 0
-    for axes in regions:
-        for axisTag, axis in axes.items():
-            if axisTag in location:
-                axis.StartCoord, axis.PeakCoord, axis.EndCoord = (0, 0, 0)
+    tupleVarStores = _convertItemToTupleVarStore(itemVarStore, fvarAxes)
 
-    # merge regions left with the same axes configuration
-    regionMap, defaultRegionIndex = _groupVarRegionsWithSameAxes(regionList)
-    for varData in varStore.VarData:
-        _mergeVarDataRegions(varData, regionMap)
+    defaultDeltaArray = []
+    for variations, itemCount in zip(tupleVarStores, itemCounts):
+        defaultDeltas = instantiateTupleVariationStore(variations, location)
+        if not defaultDeltas:
+            defaultDeltas = [0] * itemCount
+        defaultDeltaArray.append(defaultDeltas)
 
-    # Collect the "default" (i.e. always-on) deltas into a two-dimension array, indexed
-    # by VarIdx outer/inner indices
-    defaultDeltaArray = [
-        _popVarDataDeltas(varData, defaultRegionIndex) for varData in varStore.VarData
-    ]
+    itemVarStore2 = _convertTupleToItemVarStore(tupleVarStores, fvarAxes, itemCounts)
 
-    # remove unused regions from VarRegionList
-    varStore.prune_regions()
+    itemVarStore.VarRegionList = itemVarStore2.VarRegionList
+    assert itemVarStore.VarDataCount == itemVarStore2.VarDataCount
+    itemVarStore.VarData = itemVarStore2.VarData
 
-    if varStore.VarRegionList.Region:
+    if itemVarStore.VarRegionList.Region:
         # optimize VarStore, and get a map from old to new VarIdx after optimization
-        varIndexMapping = varStore.optimize()
+        varIndexMapping = itemVarStore.optimize()
     else:
         varIndexMapping = None  # VarStore is empty
 
