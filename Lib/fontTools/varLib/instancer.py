@@ -179,70 +179,81 @@ def instantiateMvar(varfont, location):
         del varfont["MVAR"]
 
 
-def _getVarRegionAxes(region, fvarAxes):
-    # map fvar axes tags to VarRegionAxis in VarStore region, excluding axes that
-    # don't participate (peak == 0)
-    axes = {}
-    assert len(fvarAxes) == len(region.VarRegionAxis)
-    for fvarAxis, regionAxis in zip(fvarAxes, region.VarRegionAxis):
-        if regionAxis.PeakCoord != 0:
-            axes[fvarAxis.axisTag] = (
-                regionAxis.StartCoord,
-                regionAxis.PeakCoord,
-                regionAxis.EndCoord,
-            )
-    return axes
+class _TupleVarStoreAdapter(object):
+    def __init__(self, regions, axisOrder, tupleVarData, itemCounts):
+        self.regions = regions
+        self.axisOrder = axisOrder
+        self.tupleVarData = tupleVarData
+        self.itemCounts = itemCounts
 
-
-def _convertItemToTupleVarStore(itemVarStore, fvarAxes):
-    tupleRegions = [
-        _getVarRegionAxes(region, fvarAxes)
-        for region in itemVarStore.VarRegionList.Region
-    ]
-    tupleVarStores = []
-    for varData in itemVarStore.VarData:
+    @classmethod
+    def fromItemVarStore(cls, itemVarStore, fvarAxes):
+        axisOrder = [axis.axisTag for axis in fvarAxes]
+        regions = [
+            region.get_support(fvarAxes)
+            for region in itemVarStore.VarRegionList.Region
+        ]
         tupleVarData = []
-        varDataRegions = (tupleRegions[i] for i in varData.VarRegionIndex)
-        for axes, coordinates in zip(varDataRegions, zip(*varData.Item)):
-            tupleVarData.append(TupleVariation(axes, list(coordinates)))
-        tupleVarStores.append(tupleVarData)
+        itemCounts = []
+        for varData in itemVarStore.VarData:
+            variations = []
+            varDataRegions = (regions[i] for i in varData.VarRegionIndex)
+            for axes, coordinates in zip(varDataRegions, zip(*varData.Item)):
+                variations.append(TupleVariation(axes, list(coordinates)))
+            tupleVarData.append(variations)
+            itemCounts.append(varData.ItemCount)
+        return cls(regions, axisOrder, tupleVarData, itemCounts)
 
-    return tupleVarStores
-
-
-def _convertTupleToItemVarStore(tupleVarStores, fvarAxes, itemCounts=None):
-    if itemCounts:
-        assert len(tupleVarStores) == len(itemCounts)
-    else:
-        itemCounts = [None] * len(tupleVarStores)
-
-    axisOrder = [axis.axisTag for axis in fvarAxes]
-    regions = list(
-        collections.OrderedDict.fromkeys(
-            tuple(var.axes.items())
-            for variations in tupleVarStores
-            for var in variations
-        )
-    )
-    varDatas = []
-    for variations, itemCount in zip(tupleVarStores, itemCounts):
-        if variations:
-            if itemCount is not None:
-                assert len(variations[0].coordinates) == itemCount
-            varRegionIndices = [
-                regions.index(tuple(var.axes.items())) for var in variations
-            ]
-            varDataItems = list(zip(*(var.coordinates for var in variations)))
-            varDatas.append(
-                builder.buildVarData(varRegionIndices, varDataItems, optimize=False)
+    def dropAxes(self, axes):
+        prunedRegions = (
+            frozenset(
+                (axisTag, support)
+                for axisTag, support in region.items()
+                if axisTag not in axes
             )
-        else:
-            varDatas.append(builder.buildVarData([], [[] for _ in range(itemCount)]))
-    regionList = builder.buildVarRegionList(
-        [dict(region) for region in regions], axisOrder
-    )
-    itemVarStore = builder.buildVarStore(regionList, varDatas)
-    return itemVarStore
+            for region in self.regions
+        )
+        # dedup regions while keeping original order
+        uniqueRegions = collections.OrderedDict.fromkeys(prunedRegions)
+        self.regions = [dict(items) for items in uniqueRegions if items]
+        # TODO(anthrotype) uncomment this once we support subsetting fvar axes
+        # self.axisOrder = [
+        #     axisTag for axisTag in self.axisOrder if axisTag not in axes
+        # ]
+
+    def instantiate(self, location):
+        defaultDeltaArray = []
+        for variations, itemCount in zip(self.tupleVarData, self.itemCounts):
+            defaultDeltas = instantiateTupleVariationStore(variations, location)
+            if not defaultDeltas:
+                defaultDeltas = [0] * itemCount
+            defaultDeltaArray.append(defaultDeltas)
+
+        # remove pinned axes from all the regions
+        self.dropAxes(location.keys())
+
+        return defaultDeltaArray
+
+    def asItemVarStore(self):
+        regionOrder = [frozenset(axes.items()) for axes in self.regions]
+        varDatas = []
+        for variations, itemCount in zip(self.tupleVarData, self.itemCounts):
+            if variations:
+                assert len(variations[0].coordinates) == itemCount
+                varRegionIndices = [
+                    regionOrder.index(frozenset(var.axes.items())) for var in variations
+                ]
+                varDataItems = list(zip(*(var.coordinates for var in variations)))
+                varDatas.append(
+                    builder.buildVarData(varRegionIndices, varDataItems, optimize=False)
+                )
+            else:
+                varDatas.append(
+                    builder.buildVarData([], [[] for _ in range(itemCount)])
+                )
+        regionList = builder.buildVarRegionList(self.regions, self.axisOrder)
+        itemVarStore = builder.buildVarStore(regionList, varDatas)
+        return itemVarStore
 
 
 def instantiateItemVariationStore(itemVarStore, fvarAxes, location):
@@ -263,22 +274,13 @@ def instantiateItemVariationStore(itemVarStore, fvarAxes, location):
         varIndexMapping: a mapping from old to new VarIdx after optimization (None if
             varStore was fully instanced thus left empty).
     """
-    itemCounts = [data.ItemCount for data in itemVarStore.VarData]
+    tupleVarStore = _TupleVarStoreAdapter.fromItemVarStore(itemVarStore, fvarAxes)
+    defaultDeltaArray = tupleVarStore.instantiate(location)
+    newItemVarStore = tupleVarStore.asItemVarStore()
 
-    tupleVarStores = _convertItemToTupleVarStore(itemVarStore, fvarAxes)
-
-    defaultDeltaArray = []
-    for variations, itemCount in zip(tupleVarStores, itemCounts):
-        defaultDeltas = instantiateTupleVariationStore(variations, location)
-        if not defaultDeltas:
-            defaultDeltas = [0] * itemCount
-        defaultDeltaArray.append(defaultDeltas)
-
-    itemVarStore2 = _convertTupleToItemVarStore(tupleVarStores, fvarAxes, itemCounts)
-
-    itemVarStore.VarRegionList = itemVarStore2.VarRegionList
-    assert itemVarStore.VarDataCount == itemVarStore2.VarDataCount
-    itemVarStore.VarData = itemVarStore2.VarData
+    itemVarStore.VarRegionList = newItemVarStore.VarRegionList
+    assert itemVarStore.VarDataCount == newItemVarStore.VarDataCount
+    itemVarStore.VarData = newItemVarStore.VarData
 
     if itemVarStore.VarRegionList.Region:
         # optimize VarStore, and get a map from old to new VarIdx after optimization

@@ -272,13 +272,17 @@ class InstantiateMvarTest(object):
 
 
 class InstantiateItemVariationStoreTest(object):
-    def test_getVarRegionAxes(self):
+    def test_VarRegion_get_support(self):
         axisOrder = ["wght", "wdth", "opsz"]
         regionAxes = {"wdth": (-1.0, -1.0, 0.0), "wght": (0.0, 1.0, 1.0)}
         region = builder.buildVarRegion(regionAxes, axisOrder)
-        fvarAxes = [SimpleNamespace(axisTag=tag) for tag in axisOrder]
 
-        assert instancer._getVarRegionAxes(region, fvarAxes) == regionAxes
+        assert len(region.VarRegionAxis) == 3
+        assert region.VarRegionAxis[2].PeakCoord == 0
+
+        fvarAxes = [SimpleNamespace(axisTag=axisTag) for axisTag in axisOrder]
+
+        assert region.get_support(fvarAxes) == regionAxes
 
     @pytest.fixture
     def varStore(self):
@@ -326,79 +330,151 @@ class InstantiateItemVariationStoreTest(object):
         assert varStore.VarRegionList.RegionCount == num_regions
 
 
-def test_roundtrip_item_to_tuple_varstore(fvarAxes):
-    itemVarStore = builder.buildVarStore(
-        builder.buildVarRegionList(
+class TupleVarStoreAdapterTest(object):
+    def test_instantiate(self):
+        regions = [
+            {"wght": (-1.0, -1.0, 0)},
+            {"wght": (0.0, 1.0, 1.0)},
+            {"wdth": (-1.0, -1.0, 0)},
+            {"wght": (-1.0, -1.0, 0), "wdth": (-1.0, -1.0, 0)},
+            {"wght": (0, 1.0, 1.0), "wdth": (-1.0, -1.0, 0)},
+        ]
+        axisOrder = ["wght", "wdth"]
+        tupleVarData = [
             [
-                {"wght": (-1.0, -1.0, 0)},
-                {"wght": (0, 0.5, 1.0)},
-                {"wght": (0.5, 1.0, 1.0)},
-                {"wdth": (-1.0, -1.0, 0)},
-                {"wght": (-1.0, -1.0, 0), "wdth": (-1.0, -1.0, 0)},
-                {"wght": (0, 0.5, 1.0), "wdth": (-1.0, -1.0, 0)},
-                {"wght": (0.5, 1.0, 1.0), "wdth": (-1.0, -1.0, 0)},
+                TupleVariation({"wght": (-1.0, -1.0, 0)}, [10, 70]),
+                TupleVariation({"wght": (0.0, 1.0, 1.0)}, [30, 90]),
+                TupleVariation(
+                    {"wght": (-1.0, -1.0, 0), "wdth": (-1.0, -1.0, 0)}, [-40, -100]
+                ),
+                TupleVariation(
+                    {"wght": (0, 1.0, 1.0), "wdth": (-1.0, -1.0, 0)}, [-60, -120]
+                ),
             ],
-            ["wght", "wdth"],
-        ),
-        [
-            builder.buildVarData(
-                [0, 1, 2, 4, 5, 6],
-                [[10, -20, 30, -40, 50, -60], [70, -80, 90, -100, 110, -120]],
-            ),
-            builder.buildVarData([3, 4, 5, 6], [[5, -15, 25, -35], [45, -55, 65, -75]]),
-        ],
-    )
+            [
+                TupleVariation({"wdth": (-1.0, -1.0, 0)}, [5, 45]),
+                TupleVariation(
+                    {"wght": (-1.0, -1.0, 0), "wdth": (-1.0, -1.0, 0)}, [-15, -55]
+                ),
+                TupleVariation(
+                    {"wght": (0, 1.0, 1.0), "wdth": (-1.0, -1.0, 0)}, [-35, -75]
+                ),
+            ],
+        ]
+        adapter = instancer._TupleVarStoreAdapter(
+            regions, axisOrder, tupleVarData, itemCounts=[2, 2]
+        )
 
-    tupleVarStores = instancer._convertItemToTupleVarStore(itemVarStore, fvarAxes)
+        defaultDeltaArray = adapter.instantiate({"wght": 0.5})
 
-    assert tupleVarStores == [
-        [
-            TupleVariation({"wght": (-1.0, -1.0, 0)}, [10, 70]),
-            TupleVariation({"wght": (0, 0.5, 1.0)}, [-20, -80]),
-            TupleVariation({"wght": (0.5, 1.0, 1.0)}, [30, 90]),
-            TupleVariation(
-                {"wght": (-1.0, -1.0, 0), "wdth": (-1.0, -1.0, 0)}, [-40, -100]
-            ),
-            TupleVariation({"wght": (0, 0.5, 1.0), "wdth": (-1.0, -1.0, 0)}, [50, 110]),
-            TupleVariation(
-                {"wght": (0.5, 1.0, 1.0), "wdth": (-1.0, -1.0, 0)}, [-60, -120]
-            ),
-        ],
-        [
-            TupleVariation({"wdth": (-1.0, -1.0, 0)}, [5, 45]),
-            TupleVariation(
-                {"wght": (-1.0, -1.0, 0), "wdth": (-1.0, -1.0, 0)}, [-15, -55]
-            ),
-            TupleVariation({"wght": (0, 0.5, 1.0), "wdth": (-1.0, -1.0, 0)}, [25, 65]),
-            TupleVariation(
-                {"wght": (0.5, 1.0, 1.0), "wdth": (-1.0, -1.0, 0)}, [-35, -75]
-            ),
-        ],
-    ]
+        assert defaultDeltaArray == [[15, 45], [0, 0]]
+        assert adapter.regions == [{"wdth": (-1.0, -1.0, 0)}]
+        assert adapter.tupleVarData == [
+            [TupleVariation({"wdth": (-1.0, -1.0, 0)}, [-30, -60])],
+            [TupleVariation({"wdth": (-1.0, -1.0, 0)}, [-12, 8])],
+        ]
 
-    itemCounts = [data.ItemCount for data in itemVarStore.VarData]
-    itemVarStore2 = instancer._convertTupleToItemVarStore(
-        tupleVarStores, fvarAxes, itemCounts
-    )
+    def test_dropAxes(self):
+        regions = [
+            {"wght": (-1.0, -1.0, 0)},
+            {"wght": (0.0, 1.0, 1.0)},
+            {"wdth": (-1.0, -1.0, 0)},
+            {"opsz": (0.0, 1.0, 1.0)},
+            {"wght": (-1.0, -1.0, 0), "wdth": (-1.0, -1.0, 0)},
+            {"wght": (0, 0.5, 1.0), "wdth": (-1.0, -1.0, 0)},
+            {"wght": (0.5, 1.0, 1.0), "wdth": (-1.0, -1.0, 0)},
+        ]
+        axisOrder = ["wght", "wdth", "opsz"]
+        tupleVarData = []
+        adapter = instancer._TupleVarStoreAdapter(regions, axisOrder, [], itemCounts=[])
 
-    assert [
-        instancer._getVarRegionAxes(reg, fvarAxes)
-        for reg in itemVarStore2.VarRegionList.Region
-    ] == [
-        {"wght": (-1.0, -1.0, 0)},
-        {"wght": (0, 0.5, 1.0)},
-        {"wght": (0.5, 1.0, 1.0)},
-        {"wght": (-1.0, -1.0, 0), "wdth": (-1.0, -1.0, 0)},
-        {"wght": (0, 0.5, 1.0), "wdth": (-1.0, -1.0, 0)},
-        {"wght": (0.5, 1.0, 1.0), "wdth": (-1.0, -1.0, 0)},
-        {"wdth": (-1.0, -1.0, 0)},
-    ]
+        adapter.dropAxes({"wdth"})
 
-    assert itemVarStore2.VarDataCount == 2
-    assert itemVarStore2.VarData[0].VarRegionIndex == [0, 1, 2, 3, 4, 5]
-    assert itemVarStore2.VarData[0].Item == [
-        [10, -20, 30, -40, 50, -60],
-        [70, -80, 90, -100, 110, -120],
-    ]
-    assert itemVarStore2.VarData[1].VarRegionIndex == [6, 3, 4, 5]
-    assert itemVarStore2.VarData[1].Item == [[5, -15, 25, -35], [45, -55, 65, -75]]
+        assert adapter.regions == [
+            {"wght": (-1.0, -1.0, 0)},
+            {"wght": (0.0, 1.0, 1.0)},
+            {"opsz": (0.0, 1.0, 1.0)},
+            {"wght": (0.0, 0.5, 1.0)},
+            {"wght": (0.5, 1.0, 1.0)},
+        ]
+
+        adapter.dropAxes({"wght", "opsz"})
+
+        assert adapter.regions == []
+
+    def test_roundtrip(self, fvarAxes):
+        regions = [
+            {"wght": (-1.0, -1.0, 0)},
+            {"wght": (0, 0.5, 1.0)},
+            {"wght": (0.5, 1.0, 1.0)},
+            {"wdth": (-1.0, -1.0, 0)},
+            {"wght": (-1.0, -1.0, 0), "wdth": (-1.0, -1.0, 0)},
+            {"wght": (0, 0.5, 1.0), "wdth": (-1.0, -1.0, 0)},
+            {"wght": (0.5, 1.0, 1.0), "wdth": (-1.0, -1.0, 0)},
+        ]
+        axisOrder = [axis.axisTag for axis in fvarAxes]
+
+        itemVarStore = builder.buildVarStore(
+            builder.buildVarRegionList(regions, axisOrder),
+            [
+                builder.buildVarData(
+                    [0, 1, 2, 4, 5, 6],
+                    [[10, -20, 30, -40, 50, -60], [70, -80, 90, -100, 110, -120]],
+                ),
+                builder.buildVarData(
+                    [3, 4, 5, 6], [[5, -15, 25, -35], [45, -55, 65, -75]]
+                ),
+            ],
+        )
+
+        adapter = instancer._TupleVarStoreAdapter.fromItemVarStore(
+            itemVarStore, fvarAxes
+        )
+
+        assert adapter.tupleVarData == [
+            [
+                TupleVariation({"wght": (-1.0, -1.0, 0)}, [10, 70]),
+                TupleVariation({"wght": (0, 0.5, 1.0)}, [-20, -80]),
+                TupleVariation({"wght": (0.5, 1.0, 1.0)}, [30, 90]),
+                TupleVariation(
+                    {"wght": (-1.0, -1.0, 0), "wdth": (-1.0, -1.0, 0)}, [-40, -100]
+                ),
+                TupleVariation(
+                    {"wght": (0, 0.5, 1.0), "wdth": (-1.0, -1.0, 0)}, [50, 110]
+                ),
+                TupleVariation(
+                    {"wght": (0.5, 1.0, 1.0), "wdth": (-1.0, -1.0, 0)}, [-60, -120]
+                ),
+            ],
+            [
+                TupleVariation({"wdth": (-1.0, -1.0, 0)}, [5, 45]),
+                TupleVariation(
+                    {"wght": (-1.0, -1.0, 0), "wdth": (-1.0, -1.0, 0)}, [-15, -55]
+                ),
+                TupleVariation(
+                    {"wght": (0, 0.5, 1.0), "wdth": (-1.0, -1.0, 0)}, [25, 65]
+                ),
+                TupleVariation(
+                    {"wght": (0.5, 1.0, 1.0), "wdth": (-1.0, -1.0, 0)}, [-35, -75]
+                ),
+            ],
+        ]
+        assert adapter.itemCounts == [data.ItemCount for data in itemVarStore.VarData]
+        assert adapter.regions == regions
+        assert adapter.axisOrder == axisOrder
+
+        itemVarStore2 = adapter.asItemVarStore()
+
+        assert [
+            reg.get_support(fvarAxes)
+            for reg in itemVarStore2.VarRegionList.Region
+        ] == regions
+
+        assert itemVarStore2.VarDataCount == 2
+        assert itemVarStore2.VarData[0].VarRegionIndex == [0, 1, 2, 4, 5, 6]
+        assert itemVarStore2.VarData[0].Item == [
+            [10, -20, 30, -40, 50, -60],
+            [70, -80, 90, -100, 110, -120],
+        ]
+        assert itemVarStore2.VarData[1].VarRegionIndex == [3, 4, 5, 6]
+        assert itemVarStore2.VarData[1].Item == [[5, -15, 25, -35], [45, -55, 65, -75]]
