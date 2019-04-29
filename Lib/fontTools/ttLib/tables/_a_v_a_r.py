@@ -44,7 +44,7 @@ class table__a_v_a_r(DefaultTable.DefaultTable):
         }
         result = [sstruct.pack(AVAR_HEADER_FORMAT, header)]
         for axis in axisTags:
-            mappings = sorted(self.segments[axis].items())
+            mappings = sorted(self.segments.get(axis, {}).items())
             result.append(struct.pack(">H", len(mappings)))
             for key, value in mappings:
                 fixedKey = floatToFixed(key, 14)
@@ -73,9 +73,12 @@ class table__a_v_a_r(DefaultTable.DefaultTable):
     def toXML(self, writer, ttFont):
         axisTags = [axis.axisTag for axis in ttFont["fvar"].axes]
         for axis in axisTags:
+            mappings = sorted(self.segments.get(axis, {}).items())
+            if not mappings:
+                continue
             writer.begintag("segment", axis=axis)
             writer.newline()
-            for key, value in sorted(self.segments[axis].items()):
+            for key, value in mappings:
                 # roundtrip float -> fixed -> float to normalize TTX output
                 # as dumped after decompiling or straight from varLib
                 key = fixedToFloat(floatToFixed(key, 14), 14)
