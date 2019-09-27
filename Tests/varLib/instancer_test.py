@@ -1391,6 +1391,12 @@ class LimitTupleVariationAxisRangesTest:
                 0.5,
                 [TupleVariation({"wght": (0.0, 0.4, 1.99994)}, [100, 100])],
             ),
+            (
+                TupleVariation({"wght": (0.5, 0.5, 1.0)}, [100, 100]),
+                "wght",
+                0.5,
+                [TupleVariation({"wght": (1.0, 1.0, 1.0)}, [100, 100])],
+            ),
         ],
     )
     def test_positive_var(self, var, axisTag, newMax, expected):
@@ -1463,6 +1469,12 @@ class LimitTupleVariationAxisRangesTest:
                 "wght",
                 -0.5,
                 [TupleVariation({"wght": (-2.0, -0.4, 0.0)}, [100, 100])],
+            ),
+            (
+                TupleVariation({"wght": (-1.0, -0.5, -0.5)}, [100, 100]),
+                "wght",
+                -0.5,
+                [TupleVariation({"wght": (-1.0, -1.0, -1.0)}, [100, 100])],
             ),
         ],
     )
