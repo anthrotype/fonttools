@@ -47,13 +47,8 @@ class T2CharStringTest(unittest.TestCase):
                           'rrcurveto'])
 
     def test_encodeFloat(self):
-        import sys
         def hexenc(s):
-            return ' '.join('%02x' % ord(x) for x in s)
-        if sys.version_info[0] >= 3:
-            def hexenc_py3(s):
-                return ' '.join('%02x' % x for x in s)
-            hexenc = hexenc_py3
+            return ' '.join('%02x' % x for x in s)
 
         testNums = [
             # value                expected result
@@ -72,7 +67,7 @@ class T2CharStringTest(unittest.TestCase):
 
         for sample in testNums:
             encoded_result = encodeFloat(sample[0])
-            
+
             # check to see if we got the expected bytes
             self.assertEqual(hexenc(encoded_result), sample[1])
 
