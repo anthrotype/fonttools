@@ -2,6 +2,7 @@ from fontTools.misc.py23 import *
 from fontTools.misc.fixedTools import (
     fixedToFloat,
     floatToFixed,
+    floatToFixedToStr,
     fixedToStr,
     strToFixed,
     strToFixedToFloat,
@@ -67,6 +68,14 @@ class FixedToolsTest(unittest.TestCase):
         self.assertEqual(-1.0, strToFixedToFloat('-1.0', 14))
         self.assertAlmostEqual(0.999939, strToFixedToFloat('0.99994', 14))
         self.assertAlmostEqual(-0.999939, strToFixedToFloat('-0.99994', 14))
+
+    def test_floatToFixedToStr_precision14(self):
+        self.assertEqual('0.8', floatToFixedToStr(0.7999878, 14))
+        self.assertEqual('1.0', floatToFixedToStr(1.0, 14))
+        self.assertEqual('1.0', floatToFixedToStr(1, 14))
+        self.assertEqual('-1.0', floatToFixedToStr(-1.0, 14))
+        self.assertEqual('-16384', floatToFixedToStr(-1, 14))
+        self.assertEqual('0.0', floatToFixedToStr(0, 14))
 
     def test_fixedToFloat_return_float(self):
         value = fixedToFloat(16384, 14)

@@ -12,6 +12,7 @@ __all__ = [
 	"fixedToFloat",
 	"floatToFixed",
     "floatToFixedToFloat",
+	"floatToFixedToStr",
 	"fixedToStr",
 	"strToFixed",
 	"strToFixedToFloat",
@@ -76,7 +77,7 @@ def floatToFixedToFloat(value, precisionBits):
 def fixedToStr(value, precisionBits):
 	"""Converts a fixed-point number with 'precisionBits' number of fractional binary
 	digits to a string representing a decimal float, choosing the float that has the
-	shortest decimal reprentation (the least number of fractional decimal digits).
+	shortest decimal representation (the least number of fractional decimal digits).
 	Eg. to convert a fixed-point number in a 2.14 format, use precisionBits=14:
 
 	>>> fixedToStr(-10139, precisionBits=14)
@@ -140,6 +141,19 @@ def strToFixedToFloat(string, precisionBits):
 	value = float(string)
 	scale = 1 << precisionBits
 	return otRound(value * scale) / scale
+
+
+def floatToFixedToStr(value, precisionBits):
+	"""Convert float to string using the shortest decimal representation (ie. the least
+	number of fractional decimal digits) to represent the equivalent fixed-point number
+	with 'precisionBits' fractional binary digits.
+	It uses fixedToStr under the hood.
+
+	>>> floatToFixedToStr(-0.61883544921875, precisionBits=14)
+	'-0.61884'
+	"""
+	fixed = otRound(value * (1 << precisionBits))
+	return fixedToStr(fixed, precisionBits)
 
 
 def ensureVersionIsLong(value):
