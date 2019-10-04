@@ -1,5 +1,5 @@
 from fontTools.misc.py23 import *
-from fontTools.misc.fixedTools import fixedToFloat, floatToFixed, otRound
+from fontTools.misc.fixedTools import Fixed2Dot14, otRound
 from fontTools.misc.textTools import safeEval
 import array
 import io
@@ -62,7 +62,7 @@ class TupleVariation(object):
 		for axis in axisTags:
 			value = self.axes.get(axis)
 			if value is not None:
-				minValue, value, maxValue = (float(v) for v in value)
+				minValue, value, maxValue = (Fixed2Dot14(v) for v in value)
 				defaultMinValue = min(value, 0.0)  # -0.3 --> -0.3; 0.7 --> 0.0
 				defaultMaxValue = max(value, 0.0)  # -0.3 -->  0.0; 0.7 --> 0.7
 				if minValue == defaultMinValue and maxValue == defaultMaxValue:
@@ -100,11 +100,11 @@ class TupleVariation(object):
 	def fromXML(self, name, attrs, _content):
 		if name == "coord":
 			axis = attrs["axis"]
-			value = float(attrs["value"])
+			value = Fixed2Dot14(attrs["value"])
 			defaultMinValue = min(value, 0.0)  # -0.3 --> -0.3; 0.7 --> 0.0
 			defaultMaxValue = max(value, 0.0)  # -0.3 -->  0.0; 0.7 --> 0.7
-			minValue = float(attrs.get("min", defaultMinValue))
-			maxValue = float(attrs.get("max", defaultMaxValue))
+			minValue = Fixed2Dot14(attrs.get("min", defaultMinValue))
+			maxValue = Fixed2Dot14(attrs.get("max", defaultMaxValue))
 			self.axes[axis] = (minValue, value, maxValue)
 		elif name == "delta":
 			if "pt" in attrs:
@@ -155,7 +155,7 @@ class TupleVariation(object):
 		result = []
 		for axis in axisTags:
 			_minValue, value, _maxValue = self.axes.get(axis, (0.0, 0.0, 0.0))
-			result.append(struct.pack(">h", floatToFixed(value, 14)))
+			result.append(struct.pack(">h", Fixed2Dot14(value).scaledValue))
 		return bytesjoin(result)
 
 	def compileIntermediateCoord(self, axisTags):
@@ -173,8 +173,12 @@ class TupleVariation(object):
 		maxCoords = []
 		for axis in axisTags:
 			minValue, value, maxValue = self.axes.get(axis, (0.0, 0.0, 0.0))
-			minCoords.append(struct.pack(">h", floatToFixed(minValue, 14)))
-			maxCoords.append(struct.pack(">h", floatToFixed(maxValue, 14)))
+			minCoords.append(
+				struct.pack(">h", Fixed2Dot14(minValue).scaledValue)
+			)
+			maxCoords.append(
+				struct.pack(">h", Fixed2Dot14(maxValue).scaledValue)
+			)
 		return bytesjoin(minCoords + maxCoords)
 
 	@staticmethod
@@ -182,7 +186,8 @@ class TupleVariation(object):
 		coord = {}
 		pos = offset
 		for axis in axisTags:
-			coord[axis] = fixedToFloat(struct.unpack(">h", data[pos:pos+2])[0], 14)
+			value, = struct.unpack(">h", data[pos:pos+2])
+			coord[axis] = Fixed2Dot14.fromScaledValue(value)
 			pos += 2
 		return coord, pos
 

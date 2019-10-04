@@ -47,7 +47,7 @@ calcsize(fmt)
 """
 
 from fontTools.misc.py23 import *
-from fontTools.misc.fixedTools import fixedToFloat as fi2fl, floatToFixed as fl2fi
+from fontTools.misc.fixedTools import Fixed2Dot14, Fixed16Dot16, makeFixedNumberClass
 import struct
 import re
 
@@ -67,7 +67,8 @@ def pack(fmt, obj):
 		value = obj[name]
 		if name in fixes:
 			# fixed point conversion
-			value = fl2fi(value, fixes[name])
+			cls = fixes[name]
+			value = cls(value).scaledValue
 		elif isinstance(value, basestring):
 			value = tobytes(value)
 		elements.append(value)
@@ -89,7 +90,7 @@ def unpack(fmt, data, obj=None):
 		value = elements[i]
 		if name in fixes:
 			# fixed point conversion
-			value = fi2fl(value, fixes[name])
+			value = fixes[name].fromScaledValue(value)
 		elif isinstance(value, bytes):
 			try:
 				value = tostr(value)
@@ -127,7 +128,14 @@ _emptyRE = re.compile(r"\s*(#.*)?$")
 _fixedpointmappings = {
 		8: "b",
 		16: "h",
-		32: "l"}
+		32: "l"
+}
+
+_fixedClasses = {
+	(2, 14): Fixed2Dot14,
+	(16, 16): Fixed16Dot16,
+}
+
 
 _formatcache = {}
 
@@ -164,7 +172,11 @@ def getformat(fmt):
 						raise Error("fixed point must be 8, 16 or 32 bits long")
 					formatchar = _fixedpointmappings[bits]
 					assert m.group(5) == "F"
-					fixes[name] = after
+					fixedClass = _fixedClasses.get((before, after))
+					if fixedClass is None:
+						fixedClass = makeFixedNumberClass(before, after)
+						_fixedClasses[(before, after)] = fixedClass
+					fixes[name] = fixedClass
 			formatstring = formatstring + formatchar
 		_formatcache[fmt] = formatstring, names, fixes
 	return formatstring, names, fixes

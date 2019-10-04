@@ -3,7 +3,7 @@ CFF dictionary data and Type1/Type2 CharStrings.
 """
 
 from fontTools.misc.py23 import *
-from fontTools.misc.fixedTools import fixedToFloat, otRound
+from fontTools.misc.fixedTools import Fixed16Dot16
 from fontTools.pens.boundsPen import BoundsPen
 import struct
 import logging
@@ -46,7 +46,7 @@ def read_longInt(self, b0, data, index):
 
 def read_fixed1616(self, b0, data, index):
 	value, = struct.unpack(">l", data[index:index+4])
-	return fixedToFloat(value, precisionBits=16), index+4
+	return Fixed16Dot16.fromScaledValue(value), index+4
 
 def read_reserved(self, b0, data, index):
 	assert NotImplementedError
@@ -215,7 +215,7 @@ encodeIntT2 = getIntEncoder("t2")
 
 def encodeFixed(f, pack=struct.pack):
 	"""For T2 only"""
-	value = otRound(f * 65536)  # convert the float to fixed point
+	value = Fixed16Dot16(f).scaledValue  # convert the float to fixed point
 	if value & 0xFFFF == 0:  # check if the fractional part is zero
 		return encodeIntT2(value >> 16)  # encode only the integer part
 	else:
@@ -1125,7 +1125,7 @@ class T2CharString(object):
 				token = int(token)
 			except ValueError:
 				try:
-					token = float(token)
+					token = Fixed16Dot16(token)
 				except ValueError:
 					program.append(token)
 					if token in ('hintmask', 'cntrmask'):

@@ -1,6 +1,6 @@
 from fontTools.misc.py23 import *
 from fontTools.misc.fixedTools import (
-	fixedToFloat as fi2fl, floatToFixed as fl2fi, ensureVersionIsLong as fi2ve,
+	Fixed2Dot14, Fixed16Dot16, ensureVersionIsLong as fi2ve,
 	versionToFixed as ve2fi)
 from fontTools.misc.textTools import pad, safeEval
 from fontTools.ttLib import getSearchRange
@@ -312,16 +312,26 @@ class DeciPoints(FloatValue):
 class Fixed(FloatValue):
 	staticSize = 4
 	def read(self, reader, font, tableDict):
-		return  fi2fl(reader.readLong(), 16)
+		return  Fixed16Dot16.fromScaledValue(reader.readLong())
 	def write(self, writer, font, tableDict, value, repeatIndex=None):
-		writer.writeLong(fl2fi(value, 16))
+		writer.writeLong(Fixed16Dot16(value).scaledValue)
+	def xmlRead(self, attrs, content, font):
+		return Fixed16Dot16(attrs["value"])
+	def xmlWrite(self, xmlWriter, font, value, name, attrs):
+		xmlWriter.simpletag(name, attrs + [("value", Fixed16Dot16(value))])
+		xmlWriter.newline()
 
 class F2Dot14(FloatValue):
 	staticSize = 2
 	def read(self, reader, font, tableDict):
-		return  fi2fl(reader.readShort(), 14)
+		return  Fixed2Dot14.fromScaledValue(reader.readShort())
 	def write(self, writer, font, tableDict, value, repeatIndex=None):
-		writer.writeShort(fl2fi(value, 14))
+		writer.writeShort(Fixed2Dot14(value).scaledValue)
+	def xmlRead(self, attrs, content, font):
+		return Fixed2Dot14(attrs["value"])
+	def xmlWrite(self, xmlWriter, font, value, name, attrs):
+		xmlWriter.simpletag(name, attrs + [("value", Fixed2Dot14(value))])
+		xmlWriter.newline()
 
 class Version(BaseConverter):
 	staticSize = 4
@@ -345,7 +355,7 @@ class Version(BaseConverter):
 
 	@staticmethod
 	def fromFloat(v):
-		return fl2fi(v, 16)
+		return Fixed16Dot16(v).scaledValue
 
 
 class Char64(SimpleValue):
