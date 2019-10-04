@@ -9,6 +9,8 @@ log = logging.getLogger(__name__)
 
 __all__ = [
 	"otRound",
+	"F2Dot14",
+	"F16Dot16",
 	"fixedToFloat",
 	"floatToFixed",
     "floatToFixedToFloat",
@@ -30,6 +32,88 @@ def otRound(value):
 	https://github.com/fonttools/fonttools/issues/1248#issuecomment-383198166
 	"""
 	return int(math.floor(value + 0.5))
+
+
+class _FixedPrecisionFloat(float):
+
+	__slots__ = ("__scaledValue",)
+	_precisionBits = NotImplemented  # must override
+
+	def __new__(cls, value, _quantized=False):
+		if not _quantized:
+			if not isinstance(value, float):
+				value = float(value)
+			if cls._precisionBits is NotImplemented:
+				raise NotImplementedError("sub-classes must override '_precisionBits'")
+			scale = 1 << cls._precisionBits
+			scaledValue = otRound(value * scale)
+			value = scaledValue / scale
+		else:
+			scaledValue = None
+		self = super().__new__(cls, value)
+		self.__scaledValue = scaledValue
+		return self
+
+	@classmethod
+	def fromScaledValue(cls, scaledValue):
+		value = scaledValue / (1 << cls._precisionBits)
+		self = cls(value, _quantized=True)
+		self.__scaledValue = scaledValue
+		return self
+
+	@property
+	def precisionBits(self):
+		return self._precisionBits
+
+	@property
+	def scaledValue(self):
+		if self.__scaledValue is None:
+			self.__scaledValue = otRound(self * (1 << self._precisionBits))
+		return self.__scaledValue
+
+	def __str__(self):
+		scaledValue = self.scaledValue
+		if not scaledValue:
+			return "0.0"
+
+		scale = 1 << self._precisionBits
+		value = scaledValue / scale
+		eps = .5 / scale
+		lo = value - eps
+		hi = value + eps
+		# If the range of valid choices spans an integer, return the integer.
+		if int(lo) != int(hi):
+			return str(float(round(value)))
+		fmt = "%.8f"
+		lo = fmt % lo
+		hi = fmt % hi
+		assert len(lo) == len(hi) and lo != hi
+		for i in range(len(lo)):
+			if lo[i] != hi[i]:
+				break
+		period = lo.find('.')
+		assert period < i
+		fmt = "%%.%df" % (i - period)
+		return fmt % value
+
+	__repr__ = __str__
+
+
+class Fixed2Dot14(_FixedPrecisionFloat):
+
+	_precisionBits = 14
+
+
+class Fixed16Dot16(_FixedPrecisionFloat):
+
+	_precisionBits = 16
+
+
+
+def makeFixedNumberClass(beforeBits, afterBits):
+	name = f"Fixed{beforeBits:d}Dot{afterBits:d}"
+	return type(name, (_FixedPrecisionFloat,), {"_precisionBits": afterBits})
+
 
 
 def fixedToFloat(value, precisionBits):
