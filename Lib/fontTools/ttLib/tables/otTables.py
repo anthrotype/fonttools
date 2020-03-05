@@ -5,6 +5,8 @@ OpenType subtables.
 Most are constructed upon import from data in otData.py, all are populated with
 converter objects from otConverters.py.
 """
+from enum import IntEnum
+from collections import namedtuple
 from fontTools.misc.py23 import *
 from fontTools.misc.textTools import pad, safeEval
 from .otBase import BaseTable, FormatSwitchingBaseTable, ValueRecord, CountReference
@@ -1181,6 +1183,39 @@ class COLR(BaseTable):
 			**self.__dict__,
 			"LayerRecordCount": CountReference(self.__dict__, "LayerRecordCount")
 		}
+
+
+class BaseGlyphRecordArray(BaseTable):
+
+	def preWrite(self, font):
+		self.BaseGlyphRecord = sorted(
+			self.BaseGlyphRecord,
+			key=lambda rec: font.getGlyphID(rec.BaseGlyph)
+		)
+		return self.__dict__.copy()
+
+
+class BaseGlyphV1Array(BaseTable):
+
+	def preWrite(self, font):
+		self.BaseGlyphV1Record = sorted(
+			self.BaseGlyphV1Record,
+			key=lambda rec: font.getGlyphID(rec.BaseGlyph)
+		)
+		return self.__dict__.copy()
+
+
+
+# defaults are applied to the rightmost parameter, i.e. varIdx=0
+# TODO: use namedtuple(defaults=...) when we switch to python3.7+
+VariableValue = namedtuple("VariableValue", ["value", "varIdx"])
+VariableValue.__new__.__defaults__ = (0,)
+
+
+class ExtendMode(IntEnum):
+    PAD = 0
+    REPEAT = 1
+    REFLECT = 2
 
 
 # For each subtable format there is a class. However, we don't really distinguish
