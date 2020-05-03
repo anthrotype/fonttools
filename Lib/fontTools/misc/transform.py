@@ -45,7 +45,8 @@ Examples:
 	>>>
 """
 
-from typing import NamedTuple
+from functools import wraps
+from typing import Iterable, NamedTuple, Union
 
 
 __all__ = ["Transform", "Identity", "Offset", "Scale"]
@@ -66,10 +67,32 @@ def _normSinCos(v):
 	return v
 
 
-class Transform(NamedTuple):
+# we override NamedTuple.__new__ to optionally initialize from an iterable
+class _NamedTupleMeta(type(NamedTuple)):  # type: ignore
+
+	def __new__(cls, typename, bases, ns):
+		tpl = super().__new__(cls, typename, bases, ns)
+		tuple_new = tpl.__new__
+
+		@wraps(tuple_new)
+		def from_iterable_posarg(cls, *args, **kwargs):
+			if args and isinstance(args[0], Iterable):
+				if len(args) > 1 or kwargs:
+					raise TypeError(
+						"multiple args or kwargs not allowed when constructing from iterable"
+					)
+				return cls._make(args[0])
+			return tuple_new(cls, *args, **kwargs)
+
+		setattr(tpl, "__new__", from_iterable_posarg)
+		return tpl
+
+
+class Transform(NamedTuple, metaclass=_NamedTupleMeta):
 
 	"""2x2 transformation matrix plus offset, a.k.a. Affine transform.
-	Transform instances are immutable: all transforming methods, eg.
+
+	Transforms are tuples and as such are immutable: all transforming methods, eg.
 	rotate(), return a new Transform instance.
 
 	Examples:
@@ -137,9 +160,23 @@ class Transform(NamedTuple):
 		Traceback (most recent call last):
 		  File "<stdin>", line 1, in ?
 		KeyError: <Transform [0.2 0 0 0.3 0.08 0.18]>
+
+	Transform can also be initialized from another iterable that is passed
+	as single positional argument. The iterable must contain exactly 6 numbers.
+	No other positional or keyword arguments are allowed in this case.
+		>>> Transform((2, 0, 0, 2, 10, -5))
+		<Transform [2 0 0 2 10 -5]>
+		>>> Transform([0, 1])
+		Traceback (most recent call last):
+		  File "<stdin>", line 1, in ?
+		TypeError: Expected 6 arguments, got 2
+		>>> Transform([1, 0, 0, 1, 0, 0], 2, dx=3)
+		Traceback (most recent call last):
+		  File "<stdin>", line 1, in ?
+		TypeError: multiple args or kwargs not allowed when constructing from iterable
 	"""
 
-	xx: float = 1
+	xx: Union[Iterable[float], float] = 1
 	xy: float = 0
 	yx: float = 0
 	yy: float = 1
