@@ -222,6 +222,10 @@ class PointToSegmentPen(BasePointToSegmentPen):
 		self.pen.addComponent(glyphName, transform)
 
 
+def _pt_is_close(p1, p2):
+	return math.isclose(p1[0], p2[0]) and math.isclose(p1[1], p2[1])
+
+
 class SegmentToPointPen(AbstractPen):
 	"""
 	Adapter class that converts the (Segment)Pen protocol to the
@@ -268,7 +272,7 @@ class SegmentToPointPen(AbstractPen):
 
 	def closePath(self):
 		assert self.contour is not None, "contour missing required initial moveTo"
-		if len(self.contour) > 1 and self.contour[0][0] == self.contour[-1][0]:
+		if len(self.contour) > 1 and _pt_is_close(self.contour[0][0], self.contour[-1][0]):
 			self.contour[0] = self.contour[-1]
 			del self.contour[-1]
 		else:
