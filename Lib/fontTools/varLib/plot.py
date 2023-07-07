@@ -47,7 +47,7 @@ def plotLocations(locations, fig, names=None, **kwargs):
     if names is None:
         names = [None] * len(locations)
 
-    model = VariationModel(locations)
+    model = VariationModel(locations, ot=False)
     names = [names[model.reverseMapping[i]] for i in range(len(names))]
 
     axes = sorted(locations[0].keys())
@@ -226,7 +226,7 @@ def main(args=None):
                 loc, v = arg.split("=")
                 locations.append(dict(zip(axes, (float(v) for v in loc.split(",")))))
                 masterValues.append(float(v))
-            model = VariationModel(locations, axes[: len(locations[0])])
+            model = VariationModel(locations, axes[: len(locations[0])], ot=False)
             plotModelFromMasters(model, masterValues, fig)
 
     pyplot.show()

@@ -247,7 +247,7 @@ class VariationModel(object):
         7: 0.6666666666666667}]
     """
 
-    def __init__(self, locations, axisOrder=None, extrapolate=False):
+    def __init__(self, locations, axisOrder=None, extrapolate=False, ot=True):
 
         if len(set(tuple(sorted(l.items())) for l in locations)) != len(locations):
             raise VariationModelError("Locations must be unique.")
@@ -262,6 +262,7 @@ class VariationModel(object):
             locations, axisOrder=self.axisOrder
         )
         self.locations = sorted(locations, key=keyFunc)
+        self.ot = ot
 
         # Mapping from user's master order to our master order
         self.mapping = [self.locations.index(l) for l in locations]
@@ -293,8 +294,8 @@ class VariationModel(object):
 
     @staticmethod
     def getMasterLocationsSortKeyFunc(locations, axisOrder=[]):
-        if {} not in locations:
-            raise VariationModelError("Base master not found.")
+        # if {} not in locations:
+        #     raise VariationModelError("Base master not found.")
         axisPoints = {}
         for loc in locations:
             if len(loc) != 1:
@@ -428,10 +429,13 @@ class VariationModel(object):
         for loc in locations:
             region = {}
             for axis, locV in loc.items():
-                if locV > 0:
-                    region[axis] = (0, locV, maxV[axis])
+                if self.ot:
+                    if locV > 0:
+                        region[axis] = (0, locV, maxV[axis])
+                    else:
+                        region[axis] = (minV[axis], locV, 0)
                 else:
-                    region[axis] = (minV[axis], locV, 0)
+                    region[axis] = (minV[axis], locV, maxV[axis])
             regions.append(region)
         return regions
 
@@ -441,7 +445,7 @@ class VariationModel(object):
             deltaWeight = {}
             # Walk over previous masters now, populate deltaWeight
             for j, support in enumerate(self.supports[:i]):
-                scalar = supportScalar(loc, support)
+                scalar = supportScalar(loc, support, ot=self.ot)
                 if scalar:
                     deltaWeight[j] = scalar
             self.deltaWeights.append(deltaWeight)
@@ -467,7 +471,11 @@ class VariationModel(object):
     def getScalars(self, loc):
         return [
             supportScalar(
-                loc, support, extrapolate=self.extrapolate, axisRanges=self.axisRanges
+                loc,
+                support,
+                extrapolate=self.extrapolate,
+                axisRanges=self.axisRanges,
+                ot=self.ot,
             )
             for support in self.supports
         ]
@@ -568,7 +576,7 @@ def main(args=None):
             dict(zip(axes, (float(v) for v in s.split(",")))) for s in args.locations
         ]
 
-    model = VariationModel(locs)
+    model = VariationModel(locs, ot=False)
     print("Sorted locations:")
     pprint(model.locations)
     print("Supports:")
